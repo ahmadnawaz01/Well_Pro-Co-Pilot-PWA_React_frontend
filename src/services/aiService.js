@@ -1,52 +1,106 @@
-import { fastApiClient, extractFrappeError } from './apiClient';
+import { fastApiClient, extractApiError } from './apiClient';
 import { feedService } from './feedService';
 
 export const aiService = {
   /**
-   * Processes natural language text via FastAPI LLM pipeline (which dispatches to Frappe store_ai_record),
-   * or falls back directly to Frappe store_ai_record.
+   * 8.1 POST /api/v1/ingest/process-text
+   * Extracts structured personal records from natural language text using Gemini
+   * and automatically dispatches them to Frappe & logs to MongoDB.
    */
-  async ingestText(rawText) {
+  async processText(rawText) {
     if (!rawText || !rawText.trim()) {
       throw new Error('Please enter text to process');
     }
 
     try {
-      // 1. Try FastAPI intelligent extraction pipeline
-      const response = await fastApiClient.post('/ingest/text', {
+      const response = await fastApiClient.post('/ingest/process-text', {
         raw_text: rawText.trim()
       });
       return response.data;
     } catch (fastApiErr) {
-      console.warn('FastAPI ingest/text unavailable, falling back directly to Frappe store_ai_record:', fastApiErr.message);
+      console.warn('FastAPI ingest/process-text unavailable, attempting Frappe fallback:', fastApiErr.message);
 
-      // 2. Direct Frappe fallback using store_ai_record
-      const fallbackPayload = {
-        health: {
-          raw_input: rawText
-        }
-      };
-      return await feedService.storeAiRecord(fallbackPayload);
+      // Direct Frappe fallback using store_ai_record if FastAPI is down
+      try {
+        const fallbackPayload = {
+          health: { raw_input: rawText.trim() }
+        };
+        const res = await feedService.storeAiRecord(fallbackPayload);
+        return {
+          status: 'success',
+          extracted_count: 1,
+          extracted_records: [{ domain: 'health', record_data: fallbackPayload.health }],
+          frappe_dispatch_results: [res],
+          recalculated_scores: res.data?.recalculated_scores || res.recalculated_score
+        };
+      } catch {
+        throw new Error(extractApiError(fastApiErr, 'Failed to process text ingestion'), { cause: fastApiErr });
+      }
     }
   },
 
   /**
-   * Transcribes voice recording and extracts domain records via FastAPI Whisper pipeline.
+   * Backward-compatibility alias for processText
    */
-  async ingestAudio(audioBlob, filename = 'recording.webm') {
-    const formData = new FormData();
-    formData.append('audio_file', audioBlob, filename);
-
-    const response = await fastApiClient.post('/ingest/audio', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    });
-    return response.data;
+  async ingestText(rawText) {
+    return this.processText(rawText);
   },
 
   /**
-   * Multi-turn conversational chat with AI Co-Pilot.
+   * 8.2 POST /api/v1/ingest/process-audio
+   * Accepts multipart audio files (WAV, MP3, M4A, OGG, WEBM, FLAC) in any language,
+   * translates to English via Groq Whisper large-v3, extracts structured records,
+   * and inserts them into Frappe.
+   */
+  async processAudio(audioBlobOrFile, filename = 'voice.webm') {
+    if (!audioBlobOrFile) {
+      throw new Error('Audio file or recording is required');
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlobOrFile, filename);
+
+      const response = await fastApiClient.post('/ingest/process-audio', formData, {
+        headers: {
+          'Content-Type': undefined
+        }
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(extractApiError(err, 'Failed to process voice audio recording'), { cause: err });
+    }
+  },
+
+  /**
+   * 8.3 POST /api/v1/ingest/process-image
+   * Accepts receipts, medical reports, activity screenshots, or photos.
+   * Runs OCR via OpenRouter Vision, structures the data with Gemini,
+   * and persists records into Frappe.
+   */
+  async processImage(imageBlobOrFile, filename = 'document.png') {
+    if (!imageBlobOrFile) {
+      throw new Error('Image or document file is required');
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('file', imageBlobOrFile, filename);
+
+      const response = await fastApiClient.post('/ingest/process-image', formData, {
+        headers: {
+          'Content-Type': undefined
+        }
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(extractApiError(err, 'Failed to process image/document OCR'), { cause: err });
+    }
+  },
+
+  /**
+   * 9.1 POST /api/v1/chat/message
+   * Interactive multi-turn ReAct agent with Frappe tool-calling and MongoDB checkpointer memory.
    */
   async sendChatMessage(message, sessionId = 'default') {
     if (!message || !message.trim()) {
@@ -60,22 +114,40 @@ export const aiService = {
       });
       return response.data;
     } catch (err) {
-      throw new Error(extractFrappeError(err, 'Co-Pilot chat service unavailable'), { cause: err });
+      throw new Error(extractApiError(err, 'Co-Pilot chat service unavailable'), { cause: err });
     }
   },
 
   /**
-   * Fetches user chat history for the session thread.
+   * 9.2 GET /api/v1/chat/history?session_id=...
+   * Retrieves past user and assistant messages to rehydrate UI on page load.
    */
-  async getChatHistory(sessionId = 'default', limit = 50) {
+  async getChatHistory(sessionId = 'default') {
     try {
       const response = await fastApiClient.get('/chat/history', {
-        params: { session_id: sessionId, limit }
+        params: { session_id: sessionId }
       });
-      return response.data;
+      return response.data?.messages || [];
     } catch (err) {
       console.warn('Chat history unavailable:', err.message);
       return [];
     }
+  },
+
+  /**
+   * 9.3 DELETE /api/v1/chat/clear?session_id=...
+   * Clears chat memory checkpoints for a given session thread.
+   */
+  async clearChatHistory(sessionId = 'default') {
+    try {
+      const response = await fastApiClient.delete('/chat/clear', {
+        params: { session_id: sessionId }
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(extractApiError(err, 'Failed to clear chat history'), { cause: err });
+    }
   }
 };
+
+export default aiService;

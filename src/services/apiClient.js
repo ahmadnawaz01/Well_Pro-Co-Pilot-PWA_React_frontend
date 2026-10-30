@@ -5,20 +5,27 @@ const FRAPPE_URL = import.meta.env.VITE_FRAPPE_BASE_URL || 'http://localhost:800
 const FASTAPI_URL = import.meta.env.VITE_FASTAPI_BASE_URL || 'http://localhost:8080';
 
 /**
- * Robust error extractor for Frappe RPC exceptions and server responses
+ * Universal error extractor for FastAPI and Frappe RPC exceptions
  */
-export function extractFrappeError(error, fallbackMsg = 'Request failed') {
+export function extractApiError(error, fallbackMsg = 'Request failed') {
   if (!error) return fallbackMsg;
   if (!error.response) {
-    return 'Unable to reach backend server. Please verify the service is running at ' + FRAPPE_URL;
+    return 'Unable to reach backend server. Please verify the service is running.';
   }
 
   const data = error.response.data;
   if (data) {
+    // FastAPI detail format (string or validation array)
+    if (typeof data.detail === 'string') return data.detail;
+    if (Array.isArray(data.detail)) {
+      return data.detail.map((d) => d.msg || JSON.stringify(d)).join(', ');
+    }
+
+    // Frappe format
     if (typeof data.message === 'string') return data.message;
     if (data.message && typeof data.message.message === 'string') return data.message.message;
     if (data.message && typeof data.message.error === 'string') return data.message.error;
-    
+
     // Frappe python traceback / exception name extraction
     if (data.exception) {
       const parts = String(data.exception).split(':');
@@ -47,6 +54,9 @@ export function extractFrappeError(error, fallbackMsg = 'Request failed') {
   return error.message || fallbackMsg;
 }
 
+// Backward compatibility alias
+export const extractFrappeError = extractApiError;
+
 // Axios Client for Frappe ERPNext Backend (Port 8000)
 export const frappeClient = axios.create({
   baseURL: `${FRAPPE_URL}/api/method`,
@@ -60,7 +70,6 @@ export const frappeClient = axios.create({
 export const fastApiClient = axios.create({
   baseURL: `${FASTAPI_URL}/api/v1`,
   headers: {
-    'Content-Type': 'application/json',
     'Accept': 'application/json'
   }
 });

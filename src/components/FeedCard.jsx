@@ -1,4 +1,4 @@
-import { Activity, Wallet, HeartHandshake, Smile, Trash2, Edit3, Calendar, PieChart } from 'lucide-react';
+import { Activity, Wallet, HeartHandshake, Smile, Trash2, Edit3, Calendar, PieChart, Clock } from 'lucide-react';
 
 const DOMAIN_CONFIGS = {
   'Health Activity': { label: 'FITNESS SESSION', color: 'text-emerald-400', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', icon: Activity },
@@ -53,9 +53,16 @@ export function FeedCard({ item, onEdit, onDelete, defaultCurrency = 'USD' }) {
             <Icon className="w-4 h-4" />
           </div>
           <div>
-            <span className={`font-mono text-[10px] font-bold tracking-wider ${config.color} block`}>
-              {config.label}
-            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className={`font-mono text-[10px] font-bold tracking-wider ${config.color} block`}>
+                {config.label}
+              </span>
+              {item._offline_pending && (
+                <span className="font-mono text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                  <Clock className="w-2.5 h-2.5" /> PENDING OFFLINE SYNC
+                </span>
+              )}
+            </div>
             <span className="font-mono text-[11px] text-[#8a99ad] flex items-center gap-1">
               <Calendar className="w-3 h-3 inline" /> {formattedDate}
             </span>

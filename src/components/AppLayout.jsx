@@ -1,4 +1,5 @@
 import { Activity, Heart, Cpu, LogOut, Sparkles } from 'lucide-react';
+import { FloatingQuickCapture } from './FloatingQuickCapture';
 
 export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, children }) {
   const navItems = [
@@ -75,7 +76,7 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
           <div className="flex items-center gap-4 font-mono text-xs">
             <span className="flex items-center gap-2 bg-[#121820] px-3 py-1.5 rounded-full border border-[#2a3644]">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              SYSTEM ACTIVE (PORT 8000)
+              FASTAPI & FRAPPE ACTIVE
             </span>
           </div>
         </header>
@@ -118,6 +119,9 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
           );
         })}
       </div>
+
+      {/* ALWAYS-ON QUICK CAPTURE FLOATING CONTROLS (VOICE RECORD & IMAGE OCR) */}
+      <FloatingQuickCapture />
     </div>
   );
 }

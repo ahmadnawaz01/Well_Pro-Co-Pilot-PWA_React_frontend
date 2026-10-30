@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { feedService } from '../services/feedService';
 import { dashboardService } from '../services/dashboardService';
+import { offlineQueueService } from '../services/offlineQueueService';
 import { FeedCard } from '../components/FeedCard';
 import { DashboardScorecard } from '../components/DashboardScorecard';
 import { ManualRecordModal } from '../components/ManualRecordModal';
 import { EditRecordModal } from '../components/EditRecordModal';
-import { RefreshCw, Layers, Calendar, X, PlusCircle } from 'lucide-react';
+import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal';
+import { OfflineQueueModal } from '../components/OfflineQueueModal';
+import { RefreshCw, Layers, Calendar, X, PlusCircle, Wifi, WifiOff } from 'lucide-react';
 
 const FILTERS = [
   { id: 'ALL', label: 'All Life' },
@@ -30,6 +33,15 @@ export function LifeFeedPage({ userProfile }) {
   // Modals
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+
+  // Animated Delete Confirmation Modal
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Offline Queue Modal & Network State
+  const [isQueueModalOpen, setIsQueueModalOpen] = useState(false);
+  const [pendingQueueCount, setPendingQueueCount] = useState(offlineQueueService.getPendingCount());
+  const [isOnline, setIsOnline] = useState(offlineQueueService.isOnline());
 
   const preferredCurrency = userProfile?.preferred_currency || 'USD';
 
@@ -64,6 +76,29 @@ export function LifeFeedPage({ userProfile }) {
 
   useEffect(() => {
     loadData();
+
+    const handleRecordCreated = () => {
+      loadData();
+    };
+
+    const handleQueueUpdated = () => {
+      setPendingQueueCount(offlineQueueService.getPendingCount());
+      loadData();
+    };
+
+    const handleNetworkChange = (e) => {
+      setIsOnline(e.detail?.isOnline ?? offlineQueueService.isOnline());
+    };
+
+    window.addEventListener('wellpro:record_created', handleRecordCreated);
+    window.addEventListener('wellpro:queue_updated', handleQueueUpdated);
+    window.addEventListener('wellpro:network_status', handleNetworkChange);
+
+    return () => {
+      window.removeEventListener('wellpro:record_created', handleRecordCreated);
+      window.removeEventListener('wellpro:queue_updated', handleQueueUpdated);
+      window.removeEventListener('wellpro:network_status', handleNetworkChange);
+    };
   }, [loadData]);
 
   const handleRefresh = () => {
@@ -85,12 +120,17 @@ export function LifeFeedPage({ userProfile }) {
     }
   };
 
-  // 2. Triggered when a record is deleted
-  const handleDelete = async (doctype, name, itemTimestamp) => {
-    if (!window.confirm(`Delete this ${doctype} record permanently?`)) return;
+  // 2. Open animated confirmation modal for record deletion
+  const promptDelete = (doctype, name, itemTimestamp) => {
+    setDeleteTarget({ doctype, name, itemTimestamp });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    const { doctype, name, itemTimestamp } = deleteTarget;
 
     try {
-      setLoading(true);
+      setIsDeleting(true);
       await feedService.deleteRecord(doctype, name);
       const targetDate = itemTimestamp ? String(itemTimestamp).split('T')[0] : getTodayFormatted();
       try {
@@ -98,12 +138,29 @@ export function LifeFeedPage({ userProfile }) {
       } catch (e) {
         console.warn('Score recalculation note:', e.message);
       }
+      window.dispatchEvent(
+        new CustomEvent('wellpro:toast', {
+          detail: {
+            type: 'success',
+            title: 'Record Deleted',
+            message: `${doctype} deleted successfully and daily scores updated.`
+          }
+        })
+      );
+      setDeleteTarget(null);
       await loadData();
     } catch (err) {
-      alert('Failed to delete record: ' + err.message);
-      loadData();
+      window.dispatchEvent(
+        new CustomEvent('wellpro:toast', {
+          detail: {
+            type: 'error',
+            title: 'Deletion Failed',
+            message: err.message || 'Unable to delete record'
+          }
+        })
+      );
     } finally {
-      setLoading(false);
+      setIsDeleting(false);
     }
   };
 
@@ -126,6 +183,22 @@ export function LifeFeedPage({ userProfile }) {
         onRecalculate={handleRecalculateScore}
         recalculating={recalculating}
       />
+
+      {/* Offline Warning Banner */}
+      {!isOnline && (
+        <div className="bg-amber-950/80 border border-amber-500/50 text-amber-200 px-4 py-2.5 rounded-2xl font-mono text-xs flex items-center justify-between gap-2 shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <WifiOff className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+            <span>YOU ARE CURRENTLY OFFLINE — Records are saved locally and will auto-sync when reconnected.</span>
+          </div>
+          <button
+            onClick={() => setIsQueueModalOpen(true)}
+            className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-lg text-[10px] font-bold cursor-pointer whitespace-nowrap"
+          >
+            VIEW QUEUE ({pendingQueueCount})
+          </button>
+        </div>
+      )}
 
       {/* Date Filter & Action Bar */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-[#121820] p-3 rounded-2xl border border-[#2a3644]">
@@ -158,13 +231,29 @@ export function LifeFeedPage({ userProfile }) {
           )}
         </div>
 
-        <button
-          onClick={() => setIsManualModalOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer self-end sm:self-auto"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>NEW RECORD</span>
-        </button>
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          <button
+            onClick={() => setIsQueueModalOpen(true)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono text-xs font-bold border transition-all cursor-pointer ${
+              pendingQueueCount > 0
+                ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 animate-pulse'
+                : 'bg-[#1a232e] border-[#2a3644] text-[#8a99ad] hover:text-white'
+            }`}
+            title="View Offline Queue"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">QUEUE</span>
+            <span>({pendingQueueCount})</span>
+          </button>
+
+          <button
+            onClick={() => setIsManualModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>NEW RECORD</span>
+          </button>
+        </div>
       </div>
 
       {/* Category Filters Bar */}
@@ -216,7 +305,7 @@ export function LifeFeedPage({ userProfile }) {
               key={item.name}
               item={item}
               onEdit={setEditingItem}
-              onDelete={(doctype, name) => handleDelete(doctype, name, item._timestamp)}
+              onDelete={(doctype, name) => promptDelete(doctype, name, item._timestamp)}
               defaultCurrency={preferredCurrency}
             />
           ))}
@@ -236,6 +325,23 @@ export function LifeFeedPage({ userProfile }) {
         item={editingItem}
         onClose={() => setEditingItem(null)}
         onSuccess={handleMutationSuccess}
+      />
+
+      {/* Animated Delete Confirmation Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!deleteTarget}
+        title={`Delete ${deleteTarget?.doctype || 'Record'}?`}
+        message={`Are you sure you want to permanently delete this ${deleteTarget?.doctype || 'record'}? This action will remove it from Frappe and recalculate your daily score.`}
+        confirmLabel="Yes, Delete Record"
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
+
+      {/* Offline Queue Modal */}
+      <OfflineQueueModal
+        isOpen={isQueueModalOpen}
+        onClose={() => setIsQueueModalOpen(false)}
       />
     </div>
   );
