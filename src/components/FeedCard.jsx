@@ -1,22 +1,22 @@
-import React from 'react';
-import { Activity, Wallet, HeartHandshake, Smile, Trash2, Edit3, Calendar } from 'lucide-react';
+import { Activity, Wallet, HeartHandshake, Smile, Trash2, Edit3, Calendar, PieChart } from 'lucide-react';
 
 const DOMAIN_CONFIGS = {
-  'Health Activity': { label: 'FITNESS', color: 'text-emerald-400', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', icon: Activity },
-  'Health Daily Record': { label: 'HEALTH METRICS', color: 'text-emerald-400', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', icon: Activity },
-  'Financial Transaction': { label: 'FINANCIAL', color: 'text-cyan-400', border: 'border-cyan-500/30', bg: 'bg-cyan-500/10', icon: Wallet },
-  'Social Activity': { label: 'SOCIAL', color: 'text-purple-400', border: 'border-purple-500/30', bg: 'bg-purple-500/10', icon: HeartHandshake },
-  'Subjective Wellbeing Checkin': { label: 'WELLBEING', color: 'text-amber-400', border: 'border-amber-500/30', bg: 'bg-amber-500/10', icon: Smile },
+  'Health Activity': { label: 'FITNESS SESSION', color: 'text-emerald-400', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', icon: Activity },
+  'Health Daily Record': { label: 'DAILY HEALTH', color: 'text-emerald-400', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', icon: Activity },
+  'Financial Transaction': { label: 'FINANCIAL ENTRY', color: 'text-cyan-400', border: 'border-cyan-500/30', bg: 'bg-cyan-500/10', icon: Wallet },
+  'Financial Snapshot': { label: 'FINANCIAL SNAPSHOT', color: 'text-cyan-400', border: 'border-cyan-500/30', bg: 'bg-cyan-500/10', icon: PieChart },
+  'Social Activity': { label: 'SOCIAL TOUCHPOINT', color: 'text-purple-400', border: 'border-purple-500/30', bg: 'bg-purple-500/10', icon: HeartHandshake },
+  'Subjective Wellbeing Checkin': { label: 'WELLBEING CHECK-IN', color: 'text-amber-400', border: 'border-amber-500/30', bg: 'bg-amber-500/10', icon: Smile },
 };
 
 const IGNORED_KEYS = new Set([
   'name', 'owner', 'creation', 'modified', 'modified_by', 'docstatus', 'idx',
-  '_doctype', '_timestamp', 'user', 'doctype', 'source'
+  '_doctype', '_timestamp', 'user', 'doctype', 'source', 'scoring_version'
 ]);
 
 const formatFieldLabel = (key) => key.replace(/_/g, ' ').toUpperCase();
 
-export function FeedCard({ item, onEdit, onDelete }) {
+export function FeedCard({ item, onEdit, onDelete, defaultCurrency = 'USD' }) {
   const config = DOMAIN_CONFIGS[item._doctype] || {
     label: item._doctype,
     color: 'text-rose-400',
@@ -29,6 +29,7 @@ export function FeedCard({ item, onEdit, onDelete }) {
   const formattedDate = new Date(item._timestamp).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
   });
@@ -41,9 +42,10 @@ export function FeedCard({ item, onEdit, onDelete }) {
   });
 
   const mainNote = item.description || item.notes || item.raw_input;
+  const currencySymbol = item.currency || defaultCurrency;
 
   return (
-    <div className={`w-full bg-[#121820]/90 backdrop-blur-xl border ${config.border} rounded-2xl p-5 shadow-xl transition-all duration-200 flex flex-col justify-between my-2`}>
+    <div className={`w-full bg-[#121820]/90 backdrop-blur-xl border ${config.border} rounded-2xl p-5 shadow-xl transition-all duration-200 flex flex-col justify-between my-2 font-sans`}>
       {/* Header */}
       <div className="flex justify-between items-center border-b border-[#2a3644] pb-3 mb-3">
         <div className="flex items-center gap-2.5">
@@ -64,14 +66,14 @@ export function FeedCard({ item, onEdit, onDelete }) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => onEdit(item)}
-            className="text-[#8a99ad] hover:text-[#06b6d4] p-1.5 rounded-lg hover:bg-cyan-500/10 transition-colors"
+            className="text-[#8a99ad] hover:text-[#06b6d4] p-1.5 rounded-lg hover:bg-cyan-500/10 transition-colors cursor-pointer"
             title="Edit record"
           >
             <Edit3 className="w-4 h-4" />
           </button>
           <button
             onClick={() => onDelete(item._doctype, item.name)}
-            className="text-[#8a99ad] hover:text-rose-400 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors"
+            className="text-[#8a99ad] hover:text-rose-400 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer"
             title="Delete entry"
           >
             <Trash2 className="w-4 h-4" />
@@ -87,13 +89,13 @@ export function FeedCard({ item, onEdit, onDelete }) {
 
       {/* Dynamic Key-Value Pairs Grid */}
       {activeFields.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 font-mono text-xs">
           {activeFields.map(([key, val]) => (
             <div key={key} className="bg-[#1a232e] p-2.5 rounded-xl border border-[#2a3644] flex flex-col">
               <span className="text-[10px] text-[#8a99ad] block truncate">{formatFieldLabel(key)}</span>
               <span className="text-white font-bold truncate block">
-                {typeof val === 'number' && key.includes('amount')
-                  ? `PKR ${val.toLocaleString()}`
+                {typeof val === 'number' && (key.includes('amount') || key.includes('income') || key.includes('expense') || key.includes('savings') || key.includes('fund') || key.includes('debt'))
+                  ? `${currencySymbol} ${val.toLocaleString()}`
                   : String(val)}
               </span>
             </div>
@@ -108,3 +110,5 @@ export function FeedCard({ item, onEdit, onDelete }) {
     </div>
   );
 }
+
+export default FeedCard;

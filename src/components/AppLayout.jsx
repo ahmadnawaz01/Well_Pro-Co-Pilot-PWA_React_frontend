@@ -1,5 +1,4 @@
-import React from 'react';
-import { Activity, Wallet, Heart, Cpu, LogOut, Sparkles } from 'lucide-react';
+import { Activity, Heart, Cpu, LogOut, Sparkles } from 'lucide-react';
 
 export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, children }) {
   const navItems = [
@@ -20,7 +19,7 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
             </div>
             <div>
               <h1 className="font-bold text-base tracking-tight">WELLPRO</h1>
-              <span className="font-mono text-[10px] text-[#06b6d4] tracking-wider block">AI CO-PILOT v1.0</span>
+              <span className="font-mono text-[10px] text-[#06b6d4] tracking-wider block">AI CO-PILOT v2.0</span>
             </div>
           </div>
 
@@ -32,7 +31,7 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
                 <button
                   key={item.id}
                   onClick={() => onTabChange(item.id)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all cursor-pointer ${
                     isActive
                       ? 'bg-[#1a232e] border-[#f43f5e] text-[#f43f5e] shadow-lg shadow-rose-500/10'
                       : 'border-transparent text-[#8a99ad] hover:text-[#f0f4f8] hover:bg-[#1a232e]/50'
@@ -57,7 +56,7 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
           </div>
           <button
             onClick={onLogout}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>DISCONNECT</span>
@@ -70,13 +69,13 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
         {/* Desktop Top Bar Header */}
         <header className="hidden md:flex justify-between items-center pb-6 border-b border-[#2a3644] mb-6">
           <div>
-            <span className="font-mono text-xs text-[#06b6d4] tracking-widest block">OPERATIONAL DASHBOARD</span>
+            <span className="font-mono text-xs text-[#06b6d4] tracking-widest block">OPERATIONAL INTELLIGENCE DASHBOARD</span>
             <h2 className="text-2xl font-bold capitalize">{activeTab} Workspace</h2>
           </div>
           <div className="flex items-center gap-4 font-mono text-xs">
             <span className="flex items-center gap-2 bg-[#121820] px-3 py-1.5 rounded-full border border-[#2a3644]">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              SYSTEM ACTIVE
+              SYSTEM ACTIVE (PORT 8000)
             </span>
           </div>
         </header>
@@ -98,7 +97,7 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
               <button
                 key={item.id}
                 onClick={() => onTabChange(item.id)}
-                className="relative -top-5 w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] flex items-center justify-center text-white shadow-lg shadow-rose-500/30 active:scale-95 transition-transform"
+                className="relative -top-5 w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] flex items-center justify-center text-white shadow-lg shadow-rose-500/30 active:scale-95 transition-transform cursor-pointer"
               >
                 <Sparkles className="w-6 h-6 animate-pulse" />
               </button>
@@ -109,7 +108,7 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
             <button
               key={item.id}
               onClick={() => onTabChange(item.id)}
-              className={`flex flex-col items-center gap-1 p-1 text-xs transition-colors ${
+              className={`flex flex-col items-center gap-1 p-1 text-xs transition-colors cursor-pointer ${
                 isActive ? 'text-[#f43f5e]' : 'text-[#8a99ad]'
               }`}
             >
@@ -122,3 +121,5 @@ export function AppLayout({ userEmail, activeTab, onTabChange, onLogout, childre
     </div>
   );
 }
+
+export default AppLayout;

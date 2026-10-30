@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Activity, Wallet, HeartHandshake, Zap, TrendingUp, TrendingDown, Minus, RefreshCw, ShieldCheck } from 'lucide-react';
 
-// 1. EXPLICIT NAMED EXPORT
 export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
   const [timeframe, setTimeframe] = useState('today'); // 'today' | '7d' | '30d' | '90d'
 
   if (!metrics) return null;
 
-  const { health, financial, social, overall } = metrics;
+  const summary = metrics.summary || metrics;
+  const health = summary.health;
+  const financial = summary.financial;
+  const social = summary.social;
+  const overall = summary.overall;
 
   const renderTrendIcon = (trend) => {
     if (trend === 'improving') return <TrendingUp className="w-3.5 h-3.5 text-emerald-400 inline ml-1" />;
@@ -20,23 +23,20 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
     let score;
     switch (timeframe) {
       case '7d':
-        score = domainObj.seven_day_score ?? domainObj.current_score;
+        score = domainObj.seven_day_score ?? domainObj.current_score ?? domainObj.score;
         break;
       case '30d':
-        score = domainObj.thirty_day_score ?? domainObj.current_score;
+        score = domainObj.thirty_day_score ?? domainObj.current_score ?? domainObj.score;
         break;
       case '90d':
-        score = domainObj.ninety_day_score ?? domainObj.current_score;
+        score = domainObj.ninety_day_score ?? domainObj.current_score ?? domainObj.score;
         break;
       case 'today':
       default:
-        // Check today_score explicitly, fallback to current_score
-        score = domainObj.today_score !== null && domainObj.today_score !== undefined
-          ? domainObj.today_score
-          : domainObj.current_score;
+        score = domainObj.today_score ?? domainObj.current_score ?? domainObj.score;
         break;
     }
-    return score !== null && score !== undefined ? Math.round(score) : 0;
+    return score !== null && score !== undefined ? Math.round(Number(score)) : 0;
   };
 
   const overallScore = getScoreByTimeframe(overall);
@@ -63,7 +63,7 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
         <button
           onClick={onRecalculate}
           disabled={recalculating}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a232e] hover:bg-[#2a3644] border border-[#f43f5e]/40 text-[#f43f5e] font-mono text-[11px] font-bold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a232e] hover:bg-[#2a3644] border border-[#f43f5e]/40 text-[#f43f5e] font-mono text-[11px] font-bold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 cursor-pointer"
           title="Force explicit score recalculation"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${recalculating ? 'animate-spin' : ''}`} />
@@ -82,7 +82,7 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
           <button
             key={tab.id}
             onClick={() => setTimeframe(tab.id)}
-            className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all ${
+            className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
               timeframe === tab.id
                 ? 'bg-[#f43f5e] text-white shadow-md'
                 : 'text-[#8a99ad] hover:text-white'
@@ -97,15 +97,24 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
       <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] flex justify-between items-center">
         <div>
           <span className="font-mono text-[10px] text-[#8a99ad] block">
-            {timeframe.toUpperCase()} WEIGHTED SCORE
+            {timeframe.toUpperCase()} RECENCY-WEIGHTED COMPOSITE
           </span>
           <span className="text-xs text-[#06b6d4] font-mono">
-            VERSION: {metrics.scoring_version || 'v1'}
+            ALGORITHM: {metrics.scoring_version || 'v1.0.0'}
           </span>
         </div>
-        <span className="text-3xl font-bold font-mono text-transparent bg-clip-text bg-gradient-to-r from-[#f43f5e] to-[#a855f7]">
-          {overallScore}%
-        </span>
+        <div className="text-right">
+          <span className="text-3xl font-bold font-mono text-transparent bg-clip-text bg-gradient-to-r from-[#f43f5e] to-[#a855f7]">
+            {overallScore}%
+          </span>
+          {overall?.trend_change !== undefined && (
+            <span className={`block font-mono text-[10px] ${
+              overall.trend === 'improving' ? 'text-emerald-400' : overall.trend === 'declining' ? 'text-rose-400' : 'text-[#8a99ad]'
+            }`}>
+              {overall.trend_change > 0 ? `+${overall.trend_change}` : overall.trend_change}% vs avg
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 3 Domain Breakdown Cards */}
@@ -122,12 +131,12 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
           <div className="w-full bg-[#2a3644] h-1 rounded-full mt-1.5 overflow-hidden">
             <div
               className="bg-emerald-400 h-full rounded-full transition-all duration-500"
-              style={{ width: `${getScoreByTimeframe(health)}%` }}
+              style={{ width: `${Math.min(100, Math.max(0, getScoreByTimeframe(health)))}%` }}
             />
           </div>
-          <div className="text-[9px] text-[#8a99ad] mt-1 flex items-center justify-between">
+          <div className="text-[9px] text-[#8a99ad] mt-1.5 flex items-center justify-between">
             <span className="flex items-center gap-0.5"><ShieldCheck className="w-2.5 h-2.5 text-emerald-400" /> CONF</span>
-            <span>{health?.confidence ?? 100}%</span>
+            <span>{Math.round(health?.confidence ?? 100)}%</span>
           </div>
         </div>
 
@@ -135,7 +144,7 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
         <div className="bg-[#1a232e] p-2.5 rounded-xl border border-cyan-500/20 flex flex-col justify-between">
           <div className="flex justify-between items-center text-cyan-400 mb-1">
             <Wallet className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-bold">WEALTH</span>
+            <span className="text-[10px] font-bold">FINANCE</span>
           </div>
           <div className="text-lg font-bold text-white">
             {getScoreByTimeframe(financial)}%
@@ -143,12 +152,12 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
           <div className="w-full bg-[#2a3644] h-1 rounded-full mt-1.5 overflow-hidden">
             <div
               className="bg-cyan-400 h-full rounded-full transition-all duration-500"
-              style={{ width: `${getScoreByTimeframe(financial)}%` }}
+              style={{ width: `${Math.min(100, Math.max(0, getScoreByTimeframe(financial)))}%` }}
             />
           </div>
-          <div className="text-[9px] text-[#8a99ad] mt-1 flex items-center justify-between">
+          <div className="text-[9px] text-[#8a99ad] mt-1.5 flex items-center justify-between">
             <span className="flex items-center gap-0.5"><ShieldCheck className="w-2.5 h-2.5 text-cyan-400" /> CONF</span>
-            <span>{financial?.confidence ?? 100}%</span>
+            <span>{Math.round(financial?.confidence ?? 100)}%</span>
           </div>
         </div>
 
@@ -164,12 +173,12 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
           <div className="w-full bg-[#2a3644] h-1 rounded-full mt-1.5 overflow-hidden">
             <div
               className="bg-purple-400 h-full rounded-full transition-all duration-500"
-              style={{ width: `${getScoreByTimeframe(social)}%` }}
+              style={{ width: `${Math.min(100, Math.max(0, getScoreByTimeframe(social)))}%` }}
             />
           </div>
-          <div className="text-[9px] text-[#8a99ad] mt-1 flex items-center justify-between">
+          <div className="text-[9px] text-[#8a99ad] mt-1.5 flex items-center justify-between">
             <span className="flex items-center gap-0.5"><ShieldCheck className="w-2.5 h-2.5 text-purple-400" /> CONF</span>
-            <span>{social?.confidence ?? 100}%</span>
+            <span>{Math.round(social?.confidence ?? 100)}%</span>
           </div>
         </div>
       </div>
@@ -177,5 +186,4 @@ export function DashboardScorecard({ metrics, onRecalculate, recalculating }) {
   );
 }
 
-// 2. DEFAULT EXPORT (Covers both import styles)
 export default DashboardScorecard;

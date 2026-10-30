@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { frappeClient } from '../services/apiClient';
+import { useState, useEffect } from 'react';
+import { feedService } from '../services/feedService';
 import { dashboardService } from '../services/dashboardService';
+import { extractFrappeError } from '../services/apiClient';
 import { X, Edit3, Save } from 'lucide-react';
 
 const PROTECTED_FIELDS = new Set([
   'name', 'owner', 'creation', 'modified', 'modified_by', 'docstatus', 'idx',
-  '_doctype', '_timestamp', 'user', 'doctype', 'source'
+  '_doctype', '_timestamp', 'user', 'doctype', 'source', 'scoring_version'
 ]);
 
 const formatFieldLabel = (key) => key.replace(/_/g, ' ').toUpperCase();
@@ -43,7 +44,7 @@ export function EditRecordModal({ isOpen, item, onClose, onSuccess }) {
     Object.entries(fields).forEach(([key, val]) => {
       if (val === '' || val === null || val === undefined) return;
 
-      // Retain numerical type for amounts, scores, and counts
+      // Retain numerical type for amounts, scores, ratings, and counts
       if (typeof item[key] === 'number' || (!isNaN(val) && val !== '' && !key.includes('date') && !key.includes('time') && key !== 'logged_at')) {
         update_data[key] = Number(val);
       } else {
@@ -52,25 +53,28 @@ export function EditRecordModal({ isOpen, item, onClose, onSuccess }) {
     });
 
     try {
-      const response = await frappeClient.post('/well_pro.well_pro_app.api.update_record', {
-        doctype: item._doctype,
-        name: item.name,
-        update_data
-      });
+      await feedService.updateRecord(item._doctype, item.name, update_data);
 
-      const resData = response.data.message || response.data;
-      if (resData.success) {
-        // Extract effective date for score recalculation
-        const recordDate = fields.transaction_date || fields.record_date || fields.date || (fields.logged_at ? fields.logged_at.split(' ')[0] : undefined);
-        await dashboardService.recalculateScore(recordDate);
-        onSuccess(recordDate);
-        onClose();
-      } else {
-        throw new Error(resData.message || 'Update failed');
+      // Extract effective date for score recalculation
+      const recordDate =
+        fields.transaction_date ||
+        fields.record_date ||
+        fields.snapshot_date ||
+        fields.date ||
+        (fields.logged_at ? String(fields.logged_at).split(' ')[0] : undefined);
+
+      if (recordDate) {
+        try {
+          await dashboardService.recalculateScore(recordDate);
+        } catch {
+          // Backend might have already auto-recalculated
+        }
       }
+
+      onSuccess(recordDate);
+      onClose();
     } catch (err) {
-      const msg = err.response?.data?.message?.message || err.message || 'Failed to update record';
-      setError(typeof msg === 'object' ? JSON.stringify(msg) : msg);
+      setError(extractFrappeError(err, 'Failed to update record'));
     } finally {
       setLoading(false);
     }
@@ -87,7 +91,7 @@ export function EditRecordModal({ isOpen, item, onClose, onSuccess }) {
               <span className="font-mono text-[10px] text-[#8a99ad] block">ID: {item.name}</span>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-[#8a99ad] hover:text-white">
+          <button onClick={onClose} className="p-1 text-[#8a99ad] hover:text-white cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -138,7 +142,7 @@ export function EditRecordModal({ isOpen, item, onClose, onSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-[#06b6d4] to-[#a855f7] text-black font-bold py-3 mt-3 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+            className="w-full bg-gradient-to-r from-[#06b6d4] to-[#a855f7] text-black font-bold py-3 mt-3 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
             <span>{loading ? 'UPDATING...' : 'SAVE CHANGES'}</span>
@@ -148,3 +152,5 @@ export function EditRecordModal({ isOpen, item, onClose, onSuccess }) {
     </div>
   );
 }
+
+export default EditRecordModal;

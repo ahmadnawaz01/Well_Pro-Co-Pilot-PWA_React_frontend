@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { authService } from './services/authService';
 import { AuthPage } from './pages/AuthPage';
 import { AppLayout } from './components/AppLayout';
 import { LifeFeedPage } from './pages/LifeFeedPage';
+import { AICapturePage } from './pages/AICapturePage';
+import { MyLifePage } from './pages/MyLifePage';
+import { CoPilotPage } from './pages/CoPilotPage';
 
 export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -10,7 +13,7 @@ export function App() {
   const [userData, setUserData] = useState(null);
   const [activeTab, setActiveTab] = useState('feed');
 
-  const checkSession = async () => {
+  const checkSession = useCallback(async () => {
     setCheckingAuth(true);
     const session = await authService.verifySession();
     if (session) {
@@ -18,9 +21,10 @@ export function App() {
       setIsAuthenticated(true);
     } else {
       setIsAuthenticated(false);
+      setUserData(null);
     }
     setCheckingAuth(false);
-  };
+  }, []);
 
   useEffect(() => {
     checkSession();
@@ -32,13 +36,13 @@ export function App() {
 
     window.addEventListener('wellpro:unauthorized', handleUnauthorized);
     return () => window.removeEventListener('wellpro:unauthorized', handleUnauthorized);
-  }, []);
+  }, [checkSession]);
 
   if (checkingAuth) {
     return (
       <div className="min-h-screen bg-[#090d12] flex flex-col justify-center items-center font-mono text-xs text-[#8a99ad]">
         <div className="w-8 h-8 rounded-full border-2 border-[#f43f5e] border-t-transparent animate-spin mb-3" />
-        <span className="tracking-widest">INITIALIZING CO-PILOT DASHBOARD...</span>
+        <span className="tracking-widest">INITIALIZING WELLPRO CO-PILOT PLATFORM...</span>
       </div>
     );
   }
@@ -54,12 +58,27 @@ export function App() {
       onTabChange={setActiveTab}
       onLogout={() => authService.logout()}
     >
-      {activeTab === 'feed' && <LifeFeedPage />}
-      
-      {activeTab !== 'feed' && (
-        <div className="bg-[#121820] border border-[#2a3644] p-6 rounded-2xl shadow-xl font-sans text-sm text-[#8a99ad]">
-          Module workspace for <span className="text-white font-bold">{activeTab.toUpperCase()}</span> coming in next steps!
-        </div>
+      {activeTab === 'feed' && (
+        <LifeFeedPage userProfile={userData?.profile} />
+      )}
+
+      {activeTab === 'capture' && (
+        <AICapturePage onRecordCreated={() => {}} />
+      )}
+
+      {activeTab === 'life' && (
+        <MyLifePage
+          userEmail={userData?.user}
+          userProfile={userData?.profile}
+          userConsent={userData?.consent}
+          onProfileUpdated={(updatedProfile) => {
+            setUserData(prev => ({ ...prev, profile: updatedProfile }));
+          }}
+        />
+      )}
+
+      {activeTab === 'copilot' && (
+        <CoPilotPage />
       )}
     </AppLayout>
   );

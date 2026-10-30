@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { authService } from '../services/authService';
 import { validateAuthForm, getReadableAuthError } from '../utils/authValidation';
 import { Cpu, ShieldCheck, AlertCircle } from 'lucide-react';
@@ -73,7 +73,7 @@ export function AuthPage({ onAuthSuccess }) {
           <button
             type="button"
             onClick={() => { setIsLogin(true); setErrorMsg(''); }}
-            className={`flex-1 py-2 font-mono text-xs font-bold rounded-lg transition-all ${
+            className={`flex-1 py-2 font-mono text-xs font-bold rounded-lg transition-all cursor-pointer ${
               isLogin ? 'bg-[#f43f5e] text-white shadow-lg' : 'text-[#8a99ad] hover:text-white'
             }`}
           >
@@ -82,7 +82,7 @@ export function AuthPage({ onAuthSuccess }) {
           <button
             type="button"
             onClick={() => { setIsLogin(false); setErrorMsg(''); }}
-            className={`flex-1 py-2 font-mono text-xs font-bold rounded-lg transition-all ${
+            className={`flex-1 py-2 font-mono text-xs font-bold rounded-lg transition-all cursor-pointer ${
               !isLogin ? 'bg-[#f43f5e] text-white shadow-lg' : 'text-[#8a99ad] hover:text-white'
             }`}
           >
@@ -149,7 +149,7 @@ export function AuthPage({ onAuthSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-[#f43f5e] to-[#a855f7] hover:opacity-90 text-white font-bold py-3 rounded-xl shadow-lg shadow-rose-500/20 active:scale-[0.98] transition-all font-mono text-xs tracking-wider disabled:opacity-50"
+            className="w-full bg-gradient-to-r from-[#f43f5e] to-[#a855f7] hover:opacity-90 text-white font-bold py-3 rounded-xl shadow-lg shadow-rose-500/20 active:scale-[0.98] transition-all font-mono text-xs tracking-wider disabled:opacity-50 cursor-pointer"
           >
             {loading ? 'INITIALIZING...' : isLogin ? 'AUTHENTICATE SYSTEM' : 'CREATE USER PROFILE'}
           </button>
@@ -163,3 +163,5 @@ export function AuthPage({ onAuthSuccess }) {
     </div>
   );
 }
+
+export default AuthPage;

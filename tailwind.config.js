@@ -20,8 +20,9 @@ export default {
         }
       },
       fontFamily: {
-        sans: ["Host Grotesk", "Inter", "sans-serif"],
-        mono: ["IBM Plex Mono", "monospace"],
+        sans: ["Outfit", "Plus Jakarta Sans", "Nunito", "Inter", "sans-serif"],
+        mono: ["Outfit", "Plus Jakarta Sans", "JetBrains Mono", "monospace"],
+        code: ["JetBrains Mono", "monospace"],
       },
       boxShadow: {
         glow: "0 0 20px -5px rgba(244, 63, 94, 0.4)",

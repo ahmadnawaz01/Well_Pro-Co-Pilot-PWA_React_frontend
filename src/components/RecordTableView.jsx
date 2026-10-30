@@ -1,14 +1,13 @@
-import React from 'react';
 import { Edit3, Trash2 } from 'lucide-react';
 
 const IGNORED_KEYS = new Set([
   'owner', 'creation', 'modified', 'modified_by', 'docstatus', 'idx',
-  'user', 'doctype'
+  'user', 'doctype', 'scoring_version'
 ]);
 
 const formatFieldLabel = (key) => key.replace(/_/g, ' ').toUpperCase();
 
-export function RecordTableView({ items, onEdit, onDelete }) {
+export function RecordTableView({ items, onEdit, onDelete, defaultCurrency = 'USD' }) {
   if (!items || items.length === 0) return null;
 
   // Extract all unique attribute keys present across all records
@@ -24,7 +23,6 @@ export function RecordTableView({ items, onEdit, onDelete }) {
   const columns = Array.from(allKeysSet);
 
   return (
-    // FIX: Strict max-w-full and overflow containment prevents right-side layout blowout on PC
     <div className="w-full max-w-full bg-[#121820]/90 backdrop-blur-xl border border-[#2a3644] rounded-2xl overflow-hidden shadow-xl font-mono text-xs my-2">
       <div className="overflow-x-auto max-w-full no-scrollbar">
         <table className="w-full text-left border-collapse min-w-[850px]">
@@ -49,6 +47,8 @@ export function RecordTableView({ items, onEdit, onDelete }) {
                 minute: '2-digit'
               });
 
+              const currencySymbol = item.currency || defaultCurrency;
+
               return (
                 <tr key={item.name} className="hover:bg-[#1a232e]/50 transition-colors whitespace-nowrap">
                   {/* Actions Column Sticky at Left */}
@@ -56,14 +56,14 @@ export function RecordTableView({ items, onEdit, onDelete }) {
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => onEdit(item)}
-                        className="p-1.5 text-[#8a99ad] hover:text-[#06b6d4] rounded-lg hover:bg-cyan-500/10"
+                        className="p-1.5 text-[#8a99ad] hover:text-[#06b6d4] rounded-lg hover:bg-cyan-500/10 cursor-pointer"
                         title="Edit Record"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => onDelete(item._doctype, item.name)}
-                        className="p-1.5 text-[#8a99ad] hover:text-rose-400 rounded-lg hover:bg-rose-500/10"
+                        className="p-1.5 text-[#8a99ad] hover:text-rose-400 rounded-lg hover:bg-rose-500/10 cursor-pointer"
                         title="Delete Record"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -83,8 +83,8 @@ export function RecordTableView({ items, onEdit, onDelete }) {
                     }
                     return (
                       <td key={col} className="p-3 font-bold text-white max-w-xs truncate">
-                        {typeof val === 'number' && col.includes('amount')
-                          ? `PKR ${val.toLocaleString()}`
+                        {typeof val === 'number' && (col.includes('amount') || col.includes('income') || col.includes('expense') || col.includes('savings') || col.includes('fund') || col.includes('debt'))
+                          ? `${currencySymbol} ${val.toLocaleString()}`
                           : String(val)}
                       </td>
                     );
@@ -98,3 +98,5 @@ export function RecordTableView({ items, onEdit, onDelete }) {
     </div>
   );
 }
+
+export default RecordTableView;

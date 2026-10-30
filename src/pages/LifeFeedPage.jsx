@@ -1,44 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { feedService } from '../services/feedService';
 import { dashboardService } from '../services/dashboardService';
 import { FeedCard } from '../components/FeedCard';
+import { RecordTableView } from '../components/RecordTableView';
 import { DashboardScorecard } from '../components/DashboardScorecard';
 import { ManualRecordModal } from '../components/ManualRecordModal';
 import { EditRecordModal } from '../components/EditRecordModal';
-import { RefreshCw, Layers, Calendar, X, PlusCircle } from 'lucide-react';
+import { RefreshCw, Layers, Calendar, X, PlusCircle, LayoutGrid, Table } from 'lucide-react';
 
 const FILTERS = [
   { id: 'ALL', label: 'All Life' },
   { id: 'HEALTH', label: 'Health & Fitness', doctypes: ['Health Activity', 'Health Daily Record'] },
-  { id: 'WEALTH', label: 'Financial', doctypes: ['Financial Transaction'] },
+  { id: 'WEALTH', label: 'Financial', doctypes: ['Financial Transaction', 'Financial Snapshot'] },
   { id: 'SOCIAL', label: 'Social', doctypes: ['Social Activity'] },
   { id: 'WELLBEING', label: 'Wellbeing', doctypes: ['Subjective Wellbeing Checkin'] },
 ];
 
-export function LifeFeedPage() {
+export function LifeFeedPage({ userProfile }) {
   const [feedItems, setFeedItems] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [activeFilter, setActiveFilter] = useState('ALL');
+  const [viewMode, setViewMode] = useState('cards'); // 'cards' | 'table'
 
+  // Timeline feed date range filter
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
+  // Modals
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
 
-  const loadData = async (targetDate) => {
+  const preferredCurrency = userProfile?.preferred_currency || 'USD';
+
+  // Helper function to reliably format today's date as YYYY-MM-DD
+  const getTodayFormatted = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Load feed items and current scores from Frappe
+  const loadData = useCallback(async () => {
     try {
-      const activeDateParam = targetDate || toDate || undefined;
       const [items, dashboardData] = await Promise.all([
         feedService.getUnifiedFeed({
-          limit: 50,
           fromDate: fromDate || undefined,
-          toDate: activeDateParam
+          toDate: toDate || undefined
         }),
-        dashboardService.getDashboardMetrics(activeDateParam)
+        dashboardService.getDashboardMetrics(30)
       ]);
       setFeedItems(items);
       setMetrics(dashboardData);
@@ -48,45 +62,45 @@ export function LifeFeedPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [fromDate, toDate]);
 
   useEffect(() => {
     loadData();
-  }, [fromDate, toDate]);
+  }, [loadData]);
 
   const handleRefresh = () => {
     setRefreshing(true);
     loadData();
   };
 
+  // 1. Explicit recalculate button -> passes today's date to recalculate_score
   const handleRecalculateScore = async () => {
     try {
       setRecalculating(true);
-      const effectiveDate = toDate || new Date().toISOString().split('T')[0];
-      await dashboardService.recalculateScore(effectiveDate);
-      await loadData(effectiveDate);
+      const todayStr = getTodayFormatted();
+      await dashboardService.recalculateScore(todayStr);
+      await loadData();
     } catch (err) {
-      alert('Recalculation failed: ' + err.message);
+      alert('Recalculation failed: ' + (err.message || 'Server error'));
     } finally {
       setRecalculating(false);
     }
   };
 
-  // Fixed Deletion Handler
+  // 2. Triggered when a record is deleted
   const handleDelete = async (doctype, name, itemTimestamp) => {
-    if (!window.confirm(`Delete this ${doctype} entry permanently?`)) return;
+    if (!window.confirm(`Delete this ${doctype} record permanently?`)) return;
 
     try {
       setLoading(true);
-      // 1. Await actual Frappe database deletion
       await feedService.deleteRecord(doctype, name);
-
-      // 2. Determine affected date & recalculate scores in backend
-      const targetDate = itemTimestamp ? itemTimestamp.split('T')[0] : (toDate || new Date().toISOString().split('T')[0]);
-      await dashboardService.recalculateScore(targetDate);
-
-      // 3. Re-query backend database so state matches server ground truth
-      await loadData(targetDate);
+      const targetDate = itemTimestamp ? String(itemTimestamp).split('T')[0] : getTodayFormatted();
+      try {
+        await dashboardService.recalculateScore(targetDate);
+      } catch (e) {
+        console.warn('Score recalculation note:', e.message);
+      }
+      await loadData();
     } catch (err) {
       alert('Failed to delete record: ' + err.message);
       loadData();
@@ -95,14 +109,9 @@ export function LifeFeedPage() {
     }
   };
 
-  const handleMutationSuccess = async (affectedDate) => {
-    try {
-      const targetDate = affectedDate || toDate || new Date().toISOString().split('T')[0];
-      await dashboardService.recalculateScore(targetDate);
-      await loadData(targetDate);
-    } catch (err) {
-      loadData();
-    }
+  // 3. Triggered when a record is inserted or updated
+  const handleMutationSuccess = async () => {
+    await loadData();
   };
 
   const filteredItems = feedItems.filter(item => {
@@ -113,58 +122,85 @@ export function LifeFeedPage() {
 
   return (
     <div className="flex flex-col h-full space-y-3 font-sans max-w-full overflow-hidden">
-      {/* 1. Date Range & Manual Entry Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-[#121820] p-3 rounded-2xl border border-[#2a3644]">
-        <div className="flex items-center gap-2 text-[#8a99ad] font-mono text-xs flex-wrap">
-          <Calendar className="w-4 h-4 text-[#06b6d4]" />
-          <span>FROM:</span>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="bg-[#1a232e] border border-[#2a3644] text-white px-2 py-0.5 rounded-xl text-xs focus:outline-none"
-          />
-          <span>TO:</span>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="bg-[#1a232e] border border-[#2a3644] text-white px-2 py-0.5 rounded-xl text-xs focus:outline-none"
-          />
-          {(fromDate || toDate) && (
-            <button
-              onClick={() => { setFromDate(''); setToDate(''); }}
-              className="p-1 text-[#8a99ad] hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-
-        <button
-          onClick={() => setIsManualModalOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all self-end sm:self-auto"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>MANUAL RECORD</span>
-        </button>
-      </div>
-
-      {/* 2. Scorecard Banner */}
+      {/* Dashboard Scorecard Banner */}
       <DashboardScorecard
         metrics={metrics}
         onRecalculate={handleRecalculateScore}
         recalculating={recalculating}
       />
 
-      {/* 3. Category Filters Bar */}
+      {/* Date Filter & Control Bar */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-[#121820] p-3 rounded-2xl border border-[#2a3644]">
+        <div className="flex items-center gap-2 text-[#8a99ad] font-mono text-xs flex-wrap">
+          <Calendar className="w-4 h-4 text-[#06b6d4]" />
+          <span className="text-white font-bold mr-1">TIMELINE:</span>
+          <span>FROM:</span>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className="bg-[#1a232e] border border-[#2a3644] text-white px-2 py-0.5 rounded-xl text-xs focus:outline-none focus:border-[#06b6d4]"
+          />
+          <span>TO:</span>
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            className="bg-[#1a232e] border border-[#2a3644] text-white px-2 py-0.5 rounded-xl text-xs focus:outline-none focus:border-[#06b6d4]"
+          />
+          {(fromDate || toDate) && (
+            <button
+              onClick={() => { setFromDate(''); setToDate(''); }}
+              className="p-1 text-[#8a99ad] hover:text-white flex items-center gap-1 bg-[#1a232e] px-2 py-0.5 rounded-lg border border-[#2a3644] cursor-pointer"
+              title="Clear Timeline Filter"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>CLEAR</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          {/* Card / Table Toggle */}
+          <div className="flex bg-[#1a232e] p-0.5 rounded-xl border border-[#2a3644]">
+            <button
+              onClick={() => setViewMode('cards')}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                viewMode === 'cards' ? 'bg-[#f43f5e] text-white' : 'text-[#8a99ad] hover:text-white'
+              }`}
+              title="Cards View"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                viewMode === 'table' ? 'bg-[#f43f5e] text-white' : 'text-[#8a99ad] hover:text-white'
+              }`}
+              title="Table View"
+            >
+              <Table className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <button
+            onClick={() => setIsManualModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>NEW RECORD</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Category Filters Bar */}
       <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 border-b border-[#2a3644]/50 no-scrollbar">
         <div className="flex gap-2">
           {FILTERS.map((f) => (
             <button
               key={f.id}
               onClick={() => setActiveFilter(f.id)}
-              className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold whitespace-nowrap transition-all border ${
+              className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold whitespace-nowrap transition-all border cursor-pointer ${
                 activeFilter === f.id
                   ? 'bg-[#f43f5e] border-[#f43f5e] text-white shadow-lg shadow-rose-500/20'
                   : 'bg-[#121820] border-[#2a3644] text-[#8a99ad] hover:text-white'
@@ -178,23 +214,35 @@ export function LifeFeedPage() {
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="p-2 bg-[#121820] border border-[#2a3644] text-[#8a99ad] hover:text-white rounded-xl shrink-0"
-          title="Refresh Feed & Scores"
+          className="p-2 bg-[#121820] border border-[#2a3644] text-[#8a99ad] hover:text-white rounded-xl shrink-0 cursor-pointer"
+          title="Refresh Feed Records"
         >
           <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-[#06b6d4]' : ''}`} />
         </button>
       </div>
 
-      {/* 4. Streamlined Card Timeline */}
+      {/* Timeline List */}
       {loading ? (
         <div className="flex-1 flex flex-col justify-center items-center font-mono text-xs text-[#8a99ad] py-12">
           <RefreshCw className="w-6 h-6 animate-spin text-[#f43f5e] mb-2" />
-          <span>UPDATING DATABASE & RECALCULATING...</span>
+          <span>QUERYING ALL DOCTYPE REGISTRIES...</span>
         </div>
       ) : filteredItems.length === 0 ? (
         <div className="flex-1 flex flex-col justify-center items-center text-center p-8 bg-[#121820]/50 border border-[#2a3644] rounded-2xl my-6 space-y-3 font-mono">
           <Layers className="w-10 h-10 text-[#8a99ad]" />
-          <div className="text-sm font-bold text-white">NO LOGGED EVENTS</div>
+          <div className="text-sm font-bold text-white">NO LOGGED EVENTS IN SELECTED DATE RANGE</div>
+          <p className="text-xs text-[#8a99ad] max-w-sm">
+            Use "New Record" or "AI Capture" to log activities across Health, Wealth, and Social dimensions.
+          </p>
+        </div>
+      ) : viewMode === 'table' ? (
+        <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-380px)] pr-1">
+          <RecordTableView
+            items={filteredItems}
+            onEdit={setEditingItem}
+            onDelete={(doctype, name) => handleDelete(doctype, name, filteredItems.find(i => i.name === name)?._timestamp)}
+            defaultCurrency={preferredCurrency}
+          />
         </div>
       ) : (
         <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-380px)] pr-1">
@@ -204,6 +252,7 @@ export function LifeFeedPage() {
               item={item}
               onEdit={setEditingItem}
               onDelete={(doctype, name) => handleDelete(doctype, name, item._timestamp)}
+              defaultCurrency={preferredCurrency}
             />
           ))}
         </div>
@@ -226,3 +275,5 @@ export function LifeFeedPage() {
     </div>
   );
 }
+
+export default LifeFeedPage;
