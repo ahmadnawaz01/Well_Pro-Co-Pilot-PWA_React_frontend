@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { aiService } from '../services/aiService';
-import { dashboardService } from '../services/dashboardService';
-import { Cpu, Send, TrendingUp, RefreshCw, Bot, User } from 'lucide-react';
+import { Cpu, Send, RefreshCw, Bot, User } from 'lucide-react';
 
 export function CoPilotPage() {
   const [messages, setMessages] = useState([
@@ -12,25 +11,7 @@ export function CoPilotPage() {
   ]);
   const [inputMsg, setInputMsg] = useState('');
   const [sending, setSending] = useState(false);
-  const [trends, setTrends] = useState([]);
-  const [loadingTrends, setLoadingTrends] = useState(true);
   const messagesEndRef = useRef(null);
-
-  useEffect(() => {
-    async function loadTrends() {
-      try {
-        const metrics = await dashboardService.getDashboardMetrics(30);
-        if (metrics?.historical_trends) {
-          setTrends(metrics.historical_trends);
-        }
-      } catch (err) {
-        console.warn('Could not load historical trends:', err);
-      } finally {
-        setLoadingTrends(false);
-      }
-    }
-    loadTrends();
-  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -82,52 +63,8 @@ export function CoPilotPage() {
         </p>
       </div>
 
-      {/* Historical Trend Timeline Card */}
-      <div className="bg-[#121820] border border-[#2a3644] rounded-2xl p-4 shadow-xl space-y-3 font-mono text-xs">
-        <div className="flex justify-between items-center border-b border-[#2a3644] pb-2">
-          <div className="flex items-center gap-2 text-white font-bold">
-            <TrendingUp className="w-4 h-4 text-[#06b6d4]" />
-            <span>30-Day Historical Trend Analytics</span>
-          </div>
-          <span className="text-[10px] text-[#8a99ad]">
-            {trends.length} RECORDED SCORE DATA POINTS
-          </span>
-        </div>
-
-        {loadingTrends ? (
-          <div className="py-6 text-center text-[#8a99ad]">
-            <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1 text-[#06b6d4]" />
-            <span>CALCULATING HISTORICAL TRAJECTORY...</span>
-          </div>
-        ) : trends.length === 0 ? (
-          <div className="p-4 text-center text-[#8a99ad] text-xs">
-            No historical score points logged yet. Add logs in "New Record" or "AI Capture" to generate rolling timelines.
-          </div>
-        ) : (
-          <div className="overflow-x-auto no-scrollbar pb-1">
-            <div className="flex gap-2 min-w-max">
-              {trends.slice(-14).map((t, idx) => (
-                <div key={idx} className="bg-[#1a232e] p-2.5 rounded-xl border border-[#2a3644] text-center w-24 flex flex-col justify-between">
-                  <span className="text-[9px] text-[#8a99ad] block mb-1">
-                    {String(t.score_date).slice(5)}
-                  </span>
-                  <span className="text-base font-bold text-white block">
-                    {Math.round(t.overall_score || 0)}%
-                  </span>
-                  <div className="text-[8px] text-[#8a99ad] mt-1 space-y-0.5">
-                    <div className="text-emerald-400">H: {Math.round(t.health_score || 0)}%</div>
-                    <div className="text-cyan-400">F: {Math.round(t.financial_score || 0)}%</div>
-                    <div className="text-purple-400">S: {Math.round(t.social_score || 0)}%</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Interactive Chat Box */}
-      <div className="bg-[#121820] border border-[#2a3644] rounded-2xl p-4 shadow-xl flex flex-col h-[460px]">
+      <div className="bg-[#121820] border border-[#2a3644] rounded-2xl p-4 shadow-xl flex flex-col h-[540px]">
         {/* Messages Stream */}
         <div className="flex-1 overflow-y-auto space-y-3 pr-2 font-sans text-sm">
           {messages.map((m, i) => (

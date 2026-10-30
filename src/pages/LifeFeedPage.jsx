@@ -2,11 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { feedService } from '../services/feedService';
 import { dashboardService } from '../services/dashboardService';
 import { FeedCard } from '../components/FeedCard';
-import { RecordTableView } from '../components/RecordTableView';
 import { DashboardScorecard } from '../components/DashboardScorecard';
 import { ManualRecordModal } from '../components/ManualRecordModal';
 import { EditRecordModal } from '../components/EditRecordModal';
-import { RefreshCw, Layers, Calendar, X, PlusCircle, LayoutGrid, Table } from 'lucide-react';
+import { RefreshCw, Layers, Calendar, X, PlusCircle } from 'lucide-react';
 
 const FILTERS = [
   { id: 'ALL', label: 'All Life' },
@@ -23,7 +22,6 @@ export function LifeFeedPage({ userProfile }) {
   const [refreshing, setRefreshing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [activeFilter, setActiveFilter] = useState('ALL');
-  const [viewMode, setViewMode] = useState('cards'); // 'cards' | 'table'
 
   // Timeline feed date range filter
   const [fromDate, setFromDate] = useState('');
@@ -129,7 +127,7 @@ export function LifeFeedPage({ userProfile }) {
         recalculating={recalculating}
       />
 
-      {/* Date Filter & Control Bar */}
+      {/* Date Filter & Action Bar */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-[#121820] p-3 rounded-2xl border border-[#2a3644]">
         <div className="flex items-center gap-2 text-[#8a99ad] font-mono text-xs flex-wrap">
           <Calendar className="w-4 h-4 text-[#06b6d4]" />
@@ -160,37 +158,13 @@ export function LifeFeedPage({ userProfile }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 self-end sm:self-auto">
-          {/* Card / Table Toggle */}
-          <div className="flex bg-[#1a232e] p-0.5 rounded-xl border border-[#2a3644]">
-            <button
-              onClick={() => setViewMode('cards')}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                viewMode === 'cards' ? 'bg-[#f43f5e] text-white' : 'text-[#8a99ad] hover:text-white'
-              }`}
-              title="Cards View"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                viewMode === 'table' ? 'bg-[#f43f5e] text-white' : 'text-[#8a99ad] hover:text-white'
-              }`}
-              title="Table View"
-            >
-              <Table className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <button
-            onClick={() => setIsManualModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>NEW RECORD</span>
-          </button>
-        </div>
+        <button
+          onClick={() => setIsManualModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer self-end sm:self-auto"
+        >
+          <PlusCircle className="w-4 h-4" />
+          <span>NEW RECORD</span>
+        </button>
       </div>
 
       {/* Category Filters Bar */}
@@ -234,15 +208,6 @@ export function LifeFeedPage({ userProfile }) {
           <p className="text-xs text-[#8a99ad] max-w-sm">
             Use "New Record" or "AI Capture" to log activities across Health, Wealth, and Social dimensions.
           </p>
-        </div>
-      ) : viewMode === 'table' ? (
-        <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-380px)] pr-1">
-          <RecordTableView
-            items={filteredItems}
-            onEdit={setEditingItem}
-            onDelete={(doctype, name) => handleDelete(doctype, name, filteredItems.find(i => i.name === name)?._timestamp)}
-            defaultCurrency={preferredCurrency}
-          />
         </div>
       ) : (
         <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-380px)] pr-1">
