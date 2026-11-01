@@ -1,7 +1,26 @@
 import { Camera, Image as ImageIcon, X } from 'lucide-react';
 
-export function CameraChoiceModal({ isOpen, onClose, onSelectCamera, onSelectFile }) {
+export function CameraChoiceModal({
+  isOpen,
+  onClose,
+  onSelectCamera,
+  onSelectFile
+}) {
   if (!isOpen) return null;
+
+  const handleCameraClick = () => {
+    if (onSelectCamera) onSelectCamera();
+    setTimeout(() => {
+      onClose();
+    }, 120);
+  };
+
+  const handleFileClick = () => {
+    if (onSelectFile) onSelectFile();
+    setTimeout(() => {
+      onClose();
+    }, 120);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200 font-sans">
@@ -21,7 +40,7 @@ export function CameraChoiceModal({ isOpen, onClose, onSelectCamera, onSelectFil
           </div>
           <h3 className="text-base font-bold text-white tracking-tight">Capture or Upload</h3>
           <p className="text-xs text-[#8a99ad]">
-            How would you like to provide the document or photo?
+            Snap a live photo or select an existing document
           </p>
         </div>
 
@@ -29,10 +48,8 @@ export function CameraChoiceModal({ isOpen, onClose, onSelectCamera, onSelectFil
         <div className="space-y-2.5">
           {/* Option 1: Open Camera */}
           <button
-            onClick={() => {
-              onClose();
-              onSelectCamera();
-            }}
+            type="button"
+            onClick={handleCameraClick}
             className="w-full flex items-center gap-3.5 p-3.5 bg-[#1a232e] hover:bg-[#2a3644] border border-[#2a3644] hover:border-[#f43f5e] rounded-2xl text-left transition-all group cursor-pointer"
           >
             <div className="p-2.5 rounded-xl bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] text-white shadow-md shadow-rose-500/20 group-hover:scale-105 transition-transform">
@@ -40,16 +57,14 @@ export function CameraChoiceModal({ isOpen, onClose, onSelectCamera, onSelectFil
             </div>
             <div>
               <span className="font-bold text-white text-sm block">Take Photo with Camera</span>
-              <span className="text-[11px] text-[#8a99ad]">Directly snap receipt, food, or workout sheet</span>
+              <span className="text-[11px] text-[#8a99ad]">Directly snap receipt, workout, or medical log</span>
             </div>
           </button>
 
           {/* Option 2: Choose from Gallery / Files */}
           <button
-            onClick={() => {
-              onClose();
-              onSelectFile();
-            }}
+            type="button"
+            onClick={handleFileClick}
             className="w-full flex items-center gap-3.5 p-3.5 bg-[#1a232e] hover:bg-[#2a3644] border border-[#2a3644] hover:border-[#06b6d4] rounded-2xl text-left transition-all group cursor-pointer"
           >
             <div className="p-2.5 rounded-xl bg-[#06b6d4]/20 border border-[#06b6d4]/30 text-[#06b6d4] group-hover:scale-105 transition-transform">
@@ -75,4 +90,3 @@ export function CameraChoiceModal({ isOpen, onClose, onSelectCamera, onSelectFil
 }
 
 export default CameraChoiceModal;
-

@@ -1,91 +1,144 @@
-import { callFrappeMethod, extractFrappeError } from './apiClient';
+import { callFrappeMethod, fastApiClient, extractApiError } from './apiClient';
 import { authStorage } from './storage';
 
 export const authService = {
-  // Login Endpoint Call
-  // POST /api/method/well_pro.well_pro_app.api.login
+  // Login Endpoint Call: Dual Gateway (FastAPI / Frappe)
   async login(email, password) {
     await authStorage.clearAuth();
 
+    let resData = null;
+    let authError = null;
+
+    // 1. Try FastAPI /auth/login
     try {
-      const resData = await callFrappeMethod('login', {
+      const response = await fastApiClient.post('/auth/login', {
         usr: String(email).trim(),
         pwd: String(password)
       });
-
-      if (resData && resData.success && resData.data) {
-        const { api_key, api_secret, user } = resData.data;
-        await authStorage.setAuth({
-          apiKey: api_key,
-          apiSecret: api_secret,
-          userEmail: user || email
+      resData = response.data;
+    } catch (fastApiErr) {
+      authError = fastApiErr;
+      // 2. Fallback to Frappe direct RPC
+      try {
+        resData = await callFrappeMethod('login', {
+          usr: String(email).trim(),
+          pwd: String(password)
         });
-
-        // Fetch user profile and consent settings
-        try {
-          const sessionData = await this.verifySession();
-          return { ...resData, session: sessionData };
-        } catch {
-          return resData;
-        }
+      } catch (frappeErr) {
+        authError = frappeErr;
       }
-      throw new Error(resData?.message || 'Login failed');
-    } catch (err) {
-      throw new Error(extractFrappeError(err, 'Login failed. Please check your credentials.'), { cause: err });
     }
+
+    if (resData && (resData.success || resData.data)) {
+      const tokenData = resData.data || resData;
+      const apiKey = tokenData.api_key;
+      const apiSecret = tokenData.api_secret;
+      const user = tokenData.user || email;
+
+      await authStorage.setAuth({
+        apiKey,
+        apiSecret,
+        userEmail: user
+      });
+
+      // Verify and fetch session profile
+      try {
+        const sessionData = await this.verifySession();
+        return { ...resData, session: sessionData };
+      } catch {
+        return resData;
+      }
+    }
+
+    throw new Error(extractApiError(authError, 'Login failed. Please check your credentials.'), { cause: authError });
   },
 
-  // Signup Endpoint Call
-  // POST /api/method/well_pro.well_pro_app.api.signup
+  // Signup Endpoint Call: Dual Gateway (FastAPI / Frappe)
   async signup(payload) {
     await authStorage.clearAuth();
 
+    let resData = null;
+    let authError = null;
+
+    const body = {
+      email: String(payload.email).trim(),
+      password: String(payload.password),
+      first_name: String(payload.first_name).trim(),
+      last_name: String(payload.last_name || '').trim()
+    };
+
     try {
-      const resData = await callFrappeMethod('signup', {
-        email: String(payload.email).trim(),
-        password: String(payload.password),
-        first_name: String(payload.first_name).trim(),
-        last_name: String(payload.last_name || '').trim()
+      const response = await fastApiClient.post('/auth/signup', body);
+      resData = response.data;
+    } catch (fastApiErr) {
+      authError = fastApiErr;
+      try {
+        resData = await callFrappeMethod('signup', body);
+      } catch (frappeErr) {
+        authError = frappeErr;
+      }
+    }
+
+    if (resData && (resData.success || resData.data)) {
+      const tokenData = resData.data || resData;
+      const apiKey = tokenData.api_key;
+      const apiSecret = tokenData.api_secret;
+      const user = tokenData.user || payload.email;
+
+      await authStorage.setAuth({
+        apiKey,
+        apiSecret,
+        userEmail: user
       });
 
-      if (resData && resData.success && resData.data) {
-        const { api_key, api_secret, user } = resData.data;
-        await authStorage.setAuth({
-          apiKey: api_key,
-          apiSecret: api_secret,
-          userEmail: user || payload.email
-        });
-
-        try {
-          const sessionData = await this.verifySession();
-          return { ...resData, session: sessionData };
-        } catch {
-          return resData;
-        }
+      try {
+        const sessionData = await this.verifySession();
+        return { ...resData, session: sessionData };
+      } catch {
+        return resData;
       }
-      throw new Error(resData?.message || 'Registration failed');
-    } catch (err) {
-      throw new Error(extractFrappeError(err, 'Registration failed.'), { cause: err });
     }
+
+    throw new Error(extractApiError(authError, 'Registration failed.'), { cause: authError });
   },
 
   // Verify Active Session on App Start
-  // GET /api/method/well_pro.well_pro_app.api.verify_user_session
   async verifySession() {
-    const { apiKey, apiSecret } = await authStorage.getAuth();
+    const { apiKey, apiSecret, userEmail, profile, consent } = await authStorage.getAuth();
     if (!apiKey || !apiSecret || apiKey === 'undefined') return null;
 
     try {
-      const resData = await callFrappeMethod('verify_user_session', {}, true);
-      if (resData && resData.success && resData.data) {
-        const data = resData.data;
+      let resData = null;
+      try {
+        const response = await fastApiClient.get('/auth/verify-session');
+        resData = response.data;
+      } catch {
+        resData = await callFrappeMethod('verify_user_session', {}, true);
+      }
+
+      if (resData && (resData.success || resData.data)) {
+        const data = resData.data || resData;
         if (data.profile) await authStorage.setProfile(data.profile);
         if (data.consent) await authStorage.setConsent(data.consent);
         return data;
       }
       return null;
-    } catch {
-      await authStorage.clearAuth();
+    } catch (err) {
+      // If device is offline or server unreachable, preserve authenticated session using local storage
+      const isNetworkIssue = typeof navigator !== 'undefined' && (!navigator.onLine || err.message?.includes('Network Error') || !err.response);
+      if (isNetworkIssue && userEmail) {
+        return {
+          user: userEmail,
+          profile: profile || {},
+          consent: consent || {},
+          _offline_session: true
+        };
+      }
+
+      // Only wipe credentials on explicit 401/403 rejected token
+      if (err.response && (err.response.status === 401 || err.response.status === 403)) {
+        await authStorage.clearAuth();
+      }
       return null;
     }
   },
@@ -96,3 +149,5 @@ export const authService = {
     window.dispatchEvent(new CustomEvent('wellpro:unauthorized'));
   }
 };
+
+export default authService;

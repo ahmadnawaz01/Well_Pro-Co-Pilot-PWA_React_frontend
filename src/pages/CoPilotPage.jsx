@@ -227,6 +227,17 @@ export function CoPilotPage() {
           </button>
         </div>
       </div>
+
+      {/* Animated Confirmation Modal for Clearing Chatbot History */}
+      <ConfirmDeleteModal
+        isOpen={isClearModalOpen}
+        title="Clear Co-Pilot History?"
+        message="Are you sure you want to clear your conversation history? This will permanently delete your dialogue checkpoints and memory in MongoDB Atlas."
+        confirmLabel="Yes, Clear Memory"
+        loading={clearing}
+        onConfirm={handleConfirmClear}
+        onClose={() => setIsClearModalOpen(false)}
+      />
     </div>
   );
 }

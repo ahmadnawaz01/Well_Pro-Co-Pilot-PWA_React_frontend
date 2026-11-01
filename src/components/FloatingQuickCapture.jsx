@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { aiService } from '../services/aiService';
+import { CameraChoiceModal } from './CameraChoiceModal';
+import { LiveCameraCapture } from './LiveCameraCapture';
 import {
   Mic,
   Camera,
@@ -8,26 +10,50 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
-  Sparkles,
   Activity,
   DollarSign,
   Users
 } from 'lucide-react';
 
-export function FloatingQuickCapture() {
-  // Capture states: 'idle' | 'recording' | 'processing' | 'result'
+function getOptimalAudioConfig() {
+  if (typeof MediaRecorder === 'undefined') {
+    return { mimeType: '', ext: 'webm' };
+  }
+
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+
+  if (isIOS) {
+    if (MediaRecorder.isTypeSupported('audio/mp4')) return { mimeType: 'audio/mp4', ext: 'mp4' };
+    if (MediaRecorder.isTypeSupported('audio/aac')) return { mimeType: 'audio/aac', ext: 'm4a' };
+    return { mimeType: '', ext: 'mp4' };
+  }
+
+  if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) return { mimeType: 'audio/webm;codecs=opus', ext: 'webm' };
+  if (MediaRecorder.isTypeSupported('audio/webm')) return { mimeType: 'audio/webm', ext: 'webm' };
+  if (MediaRecorder.isTypeSupported('audio/mp4')) return { mimeType: 'audio/mp4', ext: 'mp4' };
+  if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) return { mimeType: 'audio/ogg;codecs=opus', ext: 'ogg' };
+
+  return { mimeType: '', ext: 'webm' };
+}
+
+export function FloatingQuickCapture({ mode = 'floating' }) {
   const [state, setState] = useState('idle');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [processingMessage, setProcessingMessage] = useState('');
   const [resultData, setResultData] = useState(null);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [, setErrorMessage] = useState('');
+  const [isChoiceModalOpen, setIsChoiceModalOpen] = useState(false);
+  const [isLiveCameraOpen, setIsLiveCameraOpen] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const audioInputRef = useRef(null);
+  const activeExtRef = useRef('webm');
 
-  // Clean up timer and media stream on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -37,28 +63,62 @@ export function FloatingQuickCapture() {
     };
   }, []);
 
-  // Format mm:ss
   const formatTimer = (secs) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // 1. Direct Click -> Start Voice Recording
   const startDirectVoiceRecording = async () => {
     setErrorMessage('');
     setResultData(null);
     audioChunksRef.current = [];
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : 'audio/mp4';
+    const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function';
 
-      const recorder = new MediaRecorder(stream, { mimeType });
+    if (!hasMediaDevices) {
+      if (audioInputRef.current) {
+        audioInputRef.current.click();
+        window.dispatchEvent(
+          new CustomEvent('wellpro:toast', {
+            detail: {
+              type: 'info',
+              title: 'Voice Audio Selection',
+              message: 'Microphone requires HTTPS or localhost. Choose an audio recording to process.'
+            }
+          })
+        );
+        return;
+      }
+    }
+
+    try {
+      const constraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      };
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+
+      const { mimeType, ext } = getOptimalAudioConfig();
+      activeExtRef.current = ext;
+
+      const options = mimeType ? { mimeType } : undefined;
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
@@ -68,23 +128,30 @@ export function FloatingQuickCapture() {
       };
 
       recorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const actualType = recorder.mimeType || mimeType || (ext === 'mp4' ? 'audio/mp4' : 'audio/webm');
+        const audioBlob = new Blob(audioChunksRef.current, { type: actualType });
         stream.getTracks().forEach((track) => track.stop());
 
-        // Automatically process the recorded audio immediately!
-        await handleProcessVoice(audioBlob);
+        const filename = `quick_voice_${Date.now()}.${activeExtRef.current}`;
+        await handleProcessVoice(audioBlob, filename);
       };
 
-      recorder.start(200);
+      recorder.start(250);
       setState('recording');
       setRecordingSeconds(0);
       timerRef.current = setInterval(() => {
         setRecordingSeconds((prev) => prev + 1);
       }, 1000);
     } catch (err) {
+      console.warn('Microphone start error:', err);
+      if (audioInputRef.current) {
+        audioInputRef.current.click();
+        return;
+      }
+
       setErrorMessage(
         err.name === 'NotAllowedError'
-          ? 'Microphone permission denied. Please allow microphone access.'
+          ? 'Microphone permission denied. Please allow microphone access in browser settings.'
           : 'Microphone unavailable: ' + err.message
       );
       setState('result');
@@ -92,7 +159,13 @@ export function FloatingQuickCapture() {
     }
   };
 
-  // Stop recording and trigger Whisper & Gemini extraction
+  const handleAudioFileInput = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await handleProcessVoice(file, file.name);
+  };
+
   const stopRecordingAndProcess = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -102,11 +175,10 @@ export function FloatingQuickCapture() {
     }
   };
 
-  // Cancel recording without submitting
   const cancelRecording = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.onstop = null; // Don't trigger auto-submit
+      mediaRecorderRef.current.onstop = null;
       mediaRecorderRef.current.stop();
     }
     setState('idle');
@@ -114,22 +186,34 @@ export function FloatingQuickCapture() {
     audioChunksRef.current = [];
   };
 
-  // Ingest voice to FastAPI
-  const handleProcessVoice = async (audioBlob) => {
+  const handleProcessVoice = async (audioBlob, customFilename = 'voice.webm') => {
     setState('processing');
-    setProcessingMessage('Groq Whisper transcribing voice & extracting records...');
+    setProcessingMessage('Processing voice recording...');
 
     try {
-      const res = await aiService.processAudio(audioBlob, 'quick_voice.webm');
+      const res = await aiService.processAudio(audioBlob, customFilename);
 
-      // Check if details were extracted
+      if (res._offline_pending || res.status === 'queued') {
+        setResultData({
+          type: 'voice',
+          hasDetails: true,
+          isOffline: true,
+          reason: res.message || 'Voice recording saved locally in IndexedDB. Will transcribe and sync automatically once connected.',
+          records: [],
+          scores: null,
+          insertedCount: 1
+        });
+        window.dispatchEvent(new CustomEvent('wellpro:record_created'));
+        return;
+      }
+
       const hasExtractedRecords = Array.isArray(res.extracted_records) && res.extracted_records.length > 0;
       const isRelevant = res.is_relevant === true || hasExtractedRecords;
 
       setResultData({
         type: 'voice',
         hasDetails: isRelevant && hasExtractedRecords,
-        reason: res.reason || (isRelevant ? 'Details successfully extracted' : 'No personal wellbeing data identified'),
+        reason: res.reason || (isRelevant ? 'Details successfully extracted' : 'No personal wellbeing data identified in speech'),
         transcribedText: res.transcribed_english_text,
         records: res.extracted_records || [],
         scores: res.recalculated_scores || res.recalculated_score || null,
@@ -137,7 +221,6 @@ export function FloatingQuickCapture() {
       });
 
       if (isRelevant && hasExtractedRecords) {
-        // Broadcast event so feeds and scorecards refresh automatically
         window.dispatchEvent(new CustomEvent('wellpro:record_created'));
       }
     } catch (err) {
@@ -151,25 +234,44 @@ export function FloatingQuickCapture() {
     }
   };
 
-  // 2. Direct Click -> Select Image / Document OCR
   const handleDirectImageClick = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
+    setIsChoiceModalOpen(true);
+  };
+
+  const handleSelectCamera = () => {
+    setIsChoiceModalOpen(false);
+    const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function';
+    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
+
+    if (hasMediaDevices && isDesktop) {
+      setIsLiveCameraOpen(true);
+    } else if (cameraInputRef.current) {
+      cameraInputRef.current.click();
     }
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
+  const processCapturedImageFile = async (file) => {
     if (!file) return;
 
-    // Reset input value so same file can be re-selected if needed
-    e.target.value = '';
-
     setState('processing');
-    setProcessingMessage(`Vision AI reading ${file.name} & extracting data...`);
+    setProcessingMessage(`Processing ${file.name}...`);
 
     try {
       const res = await aiService.processImage(file, file.name);
+
+      if (res._offline_pending || res.status === 'queued') {
+        setResultData({
+          type: 'image',
+          hasDetails: true,
+          isOffline: true,
+          reason: res.message || 'Image saved locally in IndexedDB. Vision OCR will run automatically once connected.',
+          records: [],
+          scores: null,
+          insertedCount: 1
+        });
+        window.dispatchEvent(new CustomEvent('wellpro:record_created'));
+        return;
+      }
 
       const hasExtractedRecords = Array.isArray(res.extracted_records) && res.extracted_records.length > 0;
       const isRelevant = res.is_relevant === true || hasExtractedRecords;
@@ -198,31 +300,80 @@ export function FloatingQuickCapture() {
     }
   };
 
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await processCapturedImageFile(file);
+  };
+
   const closeResult = () => {
     setState('idle');
     setResultData(null);
     setErrorMessage('');
   };
 
-  return (
-    <>
-      {/* Hidden file input for direct Image/Doc capture */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*,application/pdf"
-        capture="environment"
-        onChange={handleFileChange}
-        className="hidden"
-      />
+  // If in header mode, render only trigger buttons and hidden inputs/modals
+  if (mode === 'header') {
+    return (
+      <div className="flex items-center gap-1.5">
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <input
+          ref={audioInputRef}
+          type="file"
+          accept="audio/*"
+          onChange={handleAudioFileInput}
+          className="hidden"
+        />
 
-      {/* FLOATING ACTION DOCK (Always visible on mobile & desktop) */}
-      {/* Position: bottom-20 on mobile (above nav bar), bottom-6 on desktop */}
-      <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-40 flex flex-col items-end gap-2.5 pointer-events-auto font-sans">
-        {/* STATE 1: ACTIVE LIVE RECORDING BAR */}
+        <button
+          onClick={handleDirectImageClick}
+          className="p-2 rounded-lg bg-[#1a232e] border border-[#06b6d4]/40 text-[#06b6d4] hover:text-white hover:bg-[#2a3644] transition-all cursor-pointer active:scale-95"
+          title="Photo / Document OCR"
+          aria-label="Camera"
+        >
+          <Camera className="w-4 h-4" />
+        </button>
+
+        <button
+          onClick={startDirectVoiceRecording}
+          className="p-2 rounded-lg bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] text-white shadow-md shadow-rose-500/20 hover:opacity-95 transition-all cursor-pointer active:scale-95"
+          title="Record Voice"
+          aria-label="Record Voice"
+        >
+          <Mic className="w-4 h-4" />
+        </button>
+
+        <CameraChoiceModal
+          isOpen={isChoiceModalOpen}
+          onClose={() => setIsChoiceModalOpen(false)}
+          onSelectCamera={handleSelectCamera}
+          onSelectFile={() => fileInputRef.current?.click()}
+        />
+
+        <LiveCameraCapture
+          isOpen={isLiveCameraOpen}
+          onClose={() => setIsLiveCameraOpen(false)}
+          onCapture={processCapturedImageFile}
+        />
+
+        {/* Floating Timer / Recording Bar for Mobile Header Triggers */}
         {state === 'recording' && (
-          <div className="bg-[#121820]/95 backdrop-blur-xl border border-rose-500/60 rounded-2xl p-3 shadow-2xl shadow-rose-500/20 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2">
-            {/* Pulsing indicator */}
+          <div className="fixed top-16 right-4 z-50 bg-[#121820]/95 backdrop-blur-xl border border-rose-500/60 rounded-2xl p-3 shadow-2xl shadow-rose-500/20 flex items-center gap-3 animate-in fade-in">
             <div className="flex items-center gap-2 pl-1">
               <span className="relative flex h-3.5 w-3.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
@@ -233,35 +384,217 @@ export function FloatingQuickCapture() {
               </span>
             </div>
 
-            {/* Audio frequency wave visual bars */}
-            <div className="flex items-center gap-0.5 h-4">
-              <div className="w-1 bg-rose-500 rounded-full h-3 animate-pulse" />
-              <div className="w-1 bg-rose-400 rounded-full h-5 animate-pulse delay-75" />
-              <div className="w-1 bg-rose-500 rounded-full h-2 animate-pulse delay-150" />
-              <div className="w-1 bg-rose-400 rounded-full h-4 animate-pulse delay-100" />
-            </div>
-
-            {/* Stop & Add details button */}
             <button
               onClick={stopRecordingAndProcess}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold shadow-lg hover:opacity-95 active:scale-95 transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] hover:opacity-95 text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
             >
-              <Square className="w-3.5 h-3.5 fill-white" />
+              <Square className="w-3.5 h-3.5 fill-current" />
               <span>FINISH</span>
             </button>
 
-            {/* Cancel button */}
             <button
               onClick={cancelRecording}
               className="p-1.5 text-[#8a99ad] hover:text-white hover:bg-[#2a3644] rounded-lg transition-colors cursor-pointer"
-              title="Cancel recording"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
 
-        {/* STATE 2: PROCESSING INDICATOR */}
+        {/* Processing State Bar */}
+        {state === 'processing' && (
+          <div className="fixed top-16 right-4 z-50 bg-[#121820]/95 backdrop-blur-xl border border-[#06b6d4]/50 rounded-2xl p-3 shadow-2xl flex items-center gap-3 animate-in fade-in">
+            <RefreshCw className="w-4 h-4 text-[#06b6d4] animate-spin shrink-0" />
+            <span className="font-mono text-xs text-white truncate max-w-xs">
+              {processingMessage}
+            </span>
+          </div>
+        )}
+
+        {/* Result Confirmation Modal */}
+        {state === 'result' && resultData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+            <div className={`w-full max-w-md bg-[#121820] border rounded-2xl p-5 shadow-2xl space-y-4 ${resultData.hasDetails ? 'border-emerald-500/50' : 'border-amber-500/50'
+              }`}>
+              <div className="flex items-start justify-between gap-3 border-b border-[#2a3644] pb-3">
+                <div className="flex items-center gap-2.5">
+                  {resultData.hasDetails ? (
+                    <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                  ) : (
+                    <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                  )}
+                  <div>
+                    <h3 className="font-bold text-white text-base">
+                      {resultData.isOffline
+                        ? `${resultData.type === 'voice' ? 'Voice' : 'Photo'} Saved Offline!`
+                        : resultData.hasDetails
+                        ? `${resultData.type === 'voice' ? 'Voice' : 'Image'} Details Added!`
+                        : `${resultData.type === 'voice' ? 'Voice has no details' : 'Image has no details'}`}
+                    </h3>
+                    <span className={`font-mono text-[11px] ${
+                      resultData.isOffline
+                        ? 'text-[#06b6d4]'
+                        : resultData.hasDetails
+                        ? 'text-emerald-400'
+                        : 'text-amber-400'
+                    }`}>
+                      {resultData.isOffline
+                        ? 'SAVED IN INDEXEDDB • QUEUED FOR AUTO-SYNC'
+                        : resultData.hasDetails
+                        ? `SUCCESSFULLY INSERTED ${resultData.insertedCount} RECORD(S)`
+                        : 'NO WELLBEING METRICS IDENTIFIED'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={closeResult}
+                  className="p-1.5 text-[#8a99ad] hover:text-white hover:bg-[#1a232e] rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {resultData.reason && (
+                <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] font-mono text-xs">
+                  <span className="text-[10px] text-[#8a99ad] block mb-1">AI EVALUATION:</span>
+                  <p className={resultData.hasDetails ? 'text-[#06b6d4]' : 'text-amber-300'}>
+                    {resultData.reason}
+                  </p>
+                </div>
+              )}
+
+              {resultData.transcribedText && (
+                <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] space-y-1">
+                  <span className="font-mono text-[10px] text-[#8a99ad] block">TRANSCRIBED SPEECH:</span>
+                  <p className="text-white text-xs italic leading-relaxed">
+                    &ldquo;{resultData.transcribedText}&rdquo;
+                  </p>
+                </div>
+              )}
+
+              {resultData.ocrText && (
+                <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] space-y-1">
+                  <span className="font-mono text-[10px] text-[#8a99ad] block">EXTRACTED OCR TEXT:</span>
+                  <pre className="text-[#38bdf8] font-mono text-[11px] max-h-24 overflow-y-auto whitespace-pre-wrap">
+                    {resultData.ocrText}
+                  </pre>
+                </div>
+              )}
+
+              {resultData.records && resultData.records.length > 0 && (
+                <div className="space-y-2">
+                  <span className="font-mono text-[10px] text-[#8a99ad] block">PERSISTED METRICS:</span>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {resultData.records.map((rec, i) => {
+                      const domain = rec.domain || rec.doctype || 'record';
+                      return (
+                        <div
+                          key={i}
+                          className="bg-[#1a232e] p-2.5 rounded-xl border border-[#2a3644] flex items-center justify-between text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            {domain.toLowerCase().includes('health') && <Activity className="w-3.5 h-3.5 text-emerald-400" />}
+                            {domain.toLowerCase().includes('finan') && <DollarSign className="w-3.5 h-3.5 text-cyan-400" />}
+                            {domain.toLowerCase().includes('social') && <Users className="w-3.5 h-3.5 text-purple-400" />}
+                            <span className="font-bold text-white capitalize">{domain}</span>
+                          </div>
+                          <span className="font-mono text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                            Saved
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={closeResult}
+                className="w-full py-2.5 bg-[#1a232e] hover:bg-[#2a3644] text-white font-mono text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                DISMISS
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Floating Mode for Desktop
+  return (
+    <>
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+      <input
+        ref={audioInputRef}
+        type="file"
+        accept="audio/*"
+        onChange={handleAudioFileInput}
+        className="hidden"
+      />
+
+      <CameraChoiceModal
+        isOpen={isChoiceModalOpen}
+        onClose={() => setIsChoiceModalOpen(false)}
+        onSelectCamera={handleSelectCamera}
+        onSelectFile={() => fileInputRef.current?.click()}
+      />
+
+      <LiveCameraCapture
+        isOpen={isLiveCameraOpen}
+        onClose={() => setIsLiveCameraOpen(false)}
+        onCapture={processCapturedImageFile}
+      />
+
+      <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-40 flex flex-col items-end gap-2.5 pointer-events-auto font-sans">
+        {state === 'recording' && (
+          <div className="bg-[#121820]/95 backdrop-blur-xl border border-rose-500/60 rounded-2xl p-3 shadow-2xl shadow-rose-500/20 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2">
+            <div className="flex items-center gap-2 pl-1">
+              <span className="relative flex h-3.5 w-3.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500" />
+              </span>
+              <span className="font-mono text-xs font-bold text-white tracking-wider">
+                {formatTimer(recordingSeconds)}
+              </span>
+            </div>
+
+            <button
+              onClick={stopRecordingAndProcess}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] hover:opacity-95 text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>FINISH</span>
+            </button>
+
+            <button
+              onClick={cancelRecording}
+              className="p-1.5 text-[#8a99ad] hover:text-white hover:bg-[#2a3644] rounded-lg transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {state === 'processing' && (
           <div className="bg-[#121820]/95 backdrop-blur-xl border border-[#06b6d4]/50 rounded-2xl p-3 shadow-2xl flex items-center gap-3 animate-in fade-in">
             <RefreshCw className="w-4 h-4 text-[#06b6d4] animate-spin shrink-0" />
@@ -271,42 +604,31 @@ export function FloatingQuickCapture() {
           </div>
         )}
 
-        {/* STATE 3: IDLE FLOATING BUTTONS (Voice & Image) */}
         {state === 'idle' && (
-          <div className="flex items-center gap-2 bg-[#121820]/90 backdrop-blur-xl border border-[#2a3644] p-1.5 rounded-2xl shadow-2xl hover:border-[#f43f5e]/50 transition-all">
-            {/* Direct Image Upload Button */}
+          <div className="hidden md:flex items-center gap-2 bg-[#121820]/90 backdrop-blur-xl border border-[#2a3644] p-1.5 rounded-2xl shadow-2xl hover:border-[#f43f5e]/50 transition-all">
             <button
               onClick={handleDirectImageClick}
               className="group flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[#1a232e] hover:bg-[#2a3644] text-[#06b6d4] hover:text-white border border-[#2a3644] transition-all cursor-pointer shadow-md active:scale-95"
-              title="Upload photo, receipt or document OCR"
             >
               <Camera className="w-4 h-4 text-[#06b6d4]" />
-              <span className="hidden sm:inline font-mono text-xs font-semibold">Photo / OCR</span>
+              <span className="font-mono text-xs font-semibold">Photo / OCR</span>
             </button>
 
-            {/* Direct 1-Tap Voice Recording Button */}
             <button
               onClick={startDirectVoiceRecording}
               className="group flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] text-white shadow-lg shadow-rose-500/25 hover:opacity-95 active:scale-95 transition-all cursor-pointer"
-              title="1-Tap Direct Voice Record"
             >
-              <div className="relative">
-                <Mic className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              </div>
+              <Mic className="w-4 h-4" />
               <span className="font-mono text-xs font-bold tracking-tight">Record Voice</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* RESULT MODAL / TOAST (When voice or image completes) */}
       {state === 'result' && resultData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className={`w-full max-w-md bg-[#121820] border rounded-2xl p-5 shadow-2xl space-y-4 ${
-            resultData.hasDetails ? 'border-emerald-500/50' : 'border-amber-500/50'
-          }`}>
-            {/* Header */}
+          <div className={`w-full max-w-md bg-[#121820] border rounded-2xl p-5 shadow-2xl space-y-4 ${resultData.hasDetails ? 'border-emerald-500/50' : 'border-amber-500/50'
+            }`}>
             <div className="flex items-start justify-between gap-3 border-b border-[#2a3644] pb-3">
               <div className="flex items-center gap-2.5">
                 {resultData.hasDetails ? (
@@ -324,9 +646,8 @@ export function FloatingQuickCapture() {
                       ? `${resultData.type === 'voice' ? 'Voice' : 'Image'} Details Added!`
                       : `${resultData.type === 'voice' ? 'Voice has no details' : 'Image has no details'}`}
                   </h3>
-                  <span className={`font-mono text-[11px] ${
-                    resultData.hasDetails ? 'text-emerald-400' : 'text-amber-400'
-                  }`}>
+                  <span className={`font-mono text-[11px] ${resultData.hasDetails ? 'text-emerald-400' : 'text-amber-400'
+                    }`}>
                     {resultData.hasDetails
                       ? `SUCCESSFULLY INSERTED ${resultData.insertedCount} RECORD(S)`
                       : 'NO WELLBEING METRICS IDENTIFIED'}
@@ -342,7 +663,6 @@ export function FloatingQuickCapture() {
               </button>
             </div>
 
-            {/* Explanation / AI Reason */}
             {resultData.reason && (
               <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] font-mono text-xs">
                 <span className="text-[10px] text-[#8a99ad] block mb-1">AI EVALUATION:</span>
@@ -352,12 +672,11 @@ export function FloatingQuickCapture() {
               </div>
             )}
 
-            {/* Transcribed Audio or OCR Preview */}
             {resultData.transcribedText && (
               <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] space-y-1">
                 <span className="font-mono text-[10px] text-[#8a99ad] block">TRANSCRIBED SPEECH:</span>
                 <p className="text-white text-xs italic leading-relaxed">
-                  "{resultData.transcribedText}"
+                  &ldquo;{resultData.transcribedText}&rdquo;
                 </p>
               </div>
             )}
@@ -371,88 +690,39 @@ export function FloatingQuickCapture() {
               </div>
             )}
 
-            {/* If details were added: show records and recalculated scores */}
-            {resultData.hasDetails && (
-              <>
-                {resultData.records.length > 0 && (
-                  <div className="space-y-1.5 font-mono text-xs">
-                    <span className="text-[10px] text-[#8a99ad] block">PERSISTED TO FRAPPE:</span>
-                    <div className="space-y-1 max-h-28 overflow-y-auto">
-                      {resultData.records.map((r, i) => (
-                        <div key={i} className="flex justify-between items-center bg-[#1a232e] p-2 rounded-lg border border-[#2a3644]">
-                          <span className="text-white font-bold">{r.doctype || r.domain || 'Record'}</span>
-                          <span className="text-[10px] text-[#06b6d4]">
-                            {r.data?.record_date || r.data?.transaction_date || r.data?.date || 'Today'}
-                          </span>
+            {resultData.records && resultData.records.length > 0 && (
+              <div className="space-y-2">
+                <span className="font-mono text-[10px] text-[#8a99ad] block">PERSISTED METRICS:</span>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                  {resultData.records.map((rec, i) => {
+                    const domain = rec.domain || rec.doctype || 'record';
+                    return (
+                      <div
+                        key={i}
+                        className="bg-[#1a232e] p-2.5 rounded-xl border border-[#2a3644] flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          {domain.toLowerCase().includes('health') && <Activity className="w-3.5 h-3.5 text-emerald-400" />}
+                          {domain.toLowerCase().includes('finan') && <DollarSign className="w-3.5 h-3.5 text-cyan-400" />}
+                          {domain.toLowerCase().includes('social') && <Users className="w-3.5 h-3.5 text-purple-400" />}
+                          <span className="font-bold text-white capitalize">{domain}</span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {resultData.scores && (
-                  <div className="space-y-1.5 font-mono text-xs">
-                    <span className="text-[10px] text-[#8a99ad] block flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-[#f43f5e]" /> UPDATED SCORES:
-                    </span>
-                    <div className="grid grid-cols-4 gap-2 text-center">
-                      {(() => {
-                        const s = Object.values(resultData.scores)[0] || resultData.scores;
-                        return (
-                          <>
-                            <div className="bg-[#1a232e] p-2 rounded-xl border border-rose-500/30">
-                              <span className="text-[9px] text-[#8a99ad] block">OVERALL</span>
-                              <span className="text-sm font-bold text-[#f43f5e]">{Math.round(s.overall_score || 0)}%</span>
-                            </div>
-                            <div className="bg-[#1a232e] p-2 rounded-xl border border-emerald-500/30">
-                              <span className="text-[9px] text-[#8a99ad] block flex items-center justify-center gap-0.5">
-                                <Activity className="w-2.5 h-2.5" /> HEALTH
-                              </span>
-                              <span className="text-sm font-bold text-emerald-400">{Math.round(s.health_score || 0)}%</span>
-                            </div>
-                            <div className="bg-[#1a232e] p-2 rounded-xl border border-cyan-500/30">
-                              <span className="text-[9px] text-[#8a99ad] block flex items-center justify-center gap-0.5">
-                                <DollarSign className="w-2.5 h-2.5" /> FIN
-                              </span>
-                              <span className="text-sm font-bold text-cyan-400">{Math.round(s.financial_score || 0)}%</span>
-                            </div>
-                            <div className="bg-[#1a232e] p-2 rounded-xl border border-purple-500/30">
-                              <span className="text-[9px] text-[#8a99ad] block flex items-center justify-center gap-0.5">
-                                <Users className="w-2.5 h-2.5" /> SOC
-                              </span>
-                              <span className="text-sm font-bold text-purple-400">{Math.round(s.social_score || 0)}%</span>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                )}
-              </>
+                        <span className="font-mono text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                          Saved
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
-            {/* Error Message if any */}
-            {errorMessage && (
-              <p className="text-red-400 font-mono text-xs">{errorMessage}</p>
-            )}
-
-            {/* Action buttons */}
-            <div className="flex justify-end gap-2 pt-2 border-t border-[#2a3644]">
-              {!resultData.hasDetails && resultData.type === 'voice' && (
-                <button
-                  onClick={startDirectVoiceRecording}
-                  className="px-3 py-1.5 bg-[#1a232e] hover:bg-[#2a3644] text-[#06b6d4] font-mono text-xs rounded-xl transition-colors cursor-pointer"
-                >
-                  TRY RECORDING AGAIN
-                </button>
-              )}
-              <button
-                onClick={closeResult}
-                className="px-4 py-2 bg-gradient-to-r from-[#f43f5e] to-[#a855f7] text-white font-mono text-xs font-bold rounded-xl shadow-lg active:scale-95 transition-all cursor-pointer"
-              >
-                GOT IT
-              </button>
-            </div>
+            <button
+              onClick={closeResult}
+              className="w-full py-2.5 bg-[#1a232e] hover:bg-[#2a3644] text-white font-mono text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              DISMISS
+            </button>
           </div>
         </div>
       )}

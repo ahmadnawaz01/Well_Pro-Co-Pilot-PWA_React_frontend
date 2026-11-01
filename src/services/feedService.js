@@ -1,5 +1,6 @@
-import { callFrappeMethod, extractFrappeError } from './apiClient';
+import { callFrappeMethod, fastApiClient, extractApiError } from './apiClient';
 import { offlineQueueService } from './offlineQueueService';
+import { localCache } from './localDb';
 
 // All 6 user-tracking DocTypes in WellPro
 export const TRACKING_DOCTYPES = [
@@ -11,10 +12,12 @@ export const TRACKING_DOCTYPES = [
   { doctype: 'Subjective Wellbeing Checkin', dateField: 'date', label: 'Wellbeing' }
 ];
 
+const FEED_CACHE_KEY = 'wellpro_cached_feed_records';
+
 export const feedService = {
   /**
    * Retrieves paginated records for a specific DocType scoped to the authenticated user.
-   * Target endpoint: /api/method/well_pro.well_pro_app.api.get_user_records
+   * Tries Frappe RPC first, with automatic fallback to FastAPI /records and IndexedDB offline cache.
    */
   async getUserRecords(doctype, { limit = 50, offset = 0, order_by, fromDate, toDate } = {}) {
     const params = {
@@ -27,25 +30,66 @@ export const feedService = {
     if (fromDate) params.from_date = fromDate;
     if (toDate) params.to_date = toDate;
 
+    let resData = null;
+
+    // 1. Try Frappe get_user_records
     try {
-      const resData = await callFrappeMethod('get_user_records', params, true);
-      if (resData && resData.success && Array.isArray(resData.data)) {
-        return {
-          records: resData.data,
-          count: resData.count || resData.data.length,
-          limit: resData.limit || params.limit,
-          offset: resData.offset || params.offset
-        };
+      resData = await callFrappeMethod('get_user_records', {
+        doctype,
+        limit: params.limit,
+        offset: params.offset,
+        order_by,
+        from_date: fromDate,
+        to_date: toDate
+      }, true);
+    } catch (frappeErr) {
+      // 2. Fallback to FastAPI /records
+      try {
+        const response = await fastApiClient.get('/records', { params });
+        resData = response.data;
+      } catch (fastApiErr) {
+        console.warn(`Failed fetching records for ${doctype}:`, frappeErr.message || fastApiErr.message);
       }
-      return { records: [], count: 0, limit: params.limit, offset: params.offset };
-    } catch (err) {
-      console.warn(`Failed to fetch records for ${doctype}:`, extractFrappeError(err));
-      return { records: [], count: 0, limit: params.limit, offset: params.offset };
     }
+
+    if (resData) {
+      const records = Array.isArray(resData.data)
+        ? resData.data
+        : Array.isArray(resData.records)
+        ? resData.records
+        : Array.isArray(resData)
+        ? resData
+        : [];
+
+      // Cache records for this doctype
+      await localCache.set(`records_${doctype}`, records);
+
+      return {
+        records,
+        count: resData.count || records.length,
+        limit: resData.limit || params.limit,
+        offset: resData.offset || params.offset
+      };
+    }
+
+    // 3. Offline Cache Recovery for this doctype
+    const cached = await localCache.get(`records_${doctype}`);
+    if (Array.isArray(cached) && cached.length > 0) {
+      return {
+        records: cached,
+        count: cached.length,
+        limit: params.limit,
+        offset: params.offset,
+        _fromCache: true
+      };
+    }
+
+    return { records: [], count: 0, limit: params.limit, offset: params.offset };
   },
 
   /**
    * Fetches and aggregates records across all 6 tracking DocTypes into a unified chronological feed.
+   * Features automatic offline recovery from IndexedDB local storage cache.
    */
   async getUnifiedFeed({ fromDate, toDate, limitPerType = 50 } = {}) {
     try {
@@ -78,7 +122,7 @@ export const feedService = {
       const results = await Promise.all(fetchPromises);
       const combined = results.flat();
 
-      // Retrieve pending offline items and surface them at the top of the feed
+      // Retrieve pending offline items from queue and surface them at the top of the feed
       const offlinePendingItems = offlineQueueService
         .getQueue()
         .filter((i) => (i.status === 'pending' || i.status === 'syncing') && i.type === 'insert_record')
@@ -95,13 +139,35 @@ export const feedService = {
           };
         });
 
+      // If we fetched fresh records, cache them in IndexedDB for offline viewing
+      if (combined.length > 0) {
+        await localCache.set(FEED_CACHE_KEY, combined);
+        try {
+          localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(combined));
+        } catch {
+          // ignore
+        }
+      }
+
       // Sort timeline descending (newest first)
       combined.sort((a, b) => new Date(b._timestamp) - new Date(a._timestamp));
       return [...offlinePendingItems, ...combined];
     } catch (err) {
-      console.error('Failed to query unified feed:', err);
-      // Fallback: return queued offline items if completely offline
-      return offlineQueueService
+      console.warn('Failed to query unified feed from network, attempting offline cache:', err);
+
+      // Offline Recovery: Load cached records from IndexedDB
+      let cachedRecords = await localCache.get(FEED_CACHE_KEY);
+      if (!Array.isArray(cachedRecords) || cachedRecords.length === 0) {
+        try {
+          const fallback = localStorage.getItem(FEED_CACHE_KEY);
+          if (fallback) cachedRecords = JSON.parse(fallback);
+        } catch {
+          // ignore
+        }
+      }
+      if (!Array.isArray(cachedRecords)) cachedRecords = [];
+
+      const offlinePendingItems = offlineQueueService
         .getQueue()
         .filter((i) => i.type === 'insert_record')
         .map((i) => {
@@ -115,6 +181,9 @@ export const feedService = {
             _queue_id: i.id
           };
         });
+
+      cachedRecords.sort((a, b) => new Date(b._timestamp) - new Date(a._timestamp));
+      return [...offlinePendingItems, ...cachedRecords];
     }
   },
 
@@ -123,13 +192,11 @@ export const feedService = {
    * 1. Single Record: { doctype, record_data }
    * 2. Multi-DocType Composite: { "Health Daily Record": {...}, "Financial Transaction": [...] }
    * 3. Batch Array: { records: [...] }
-   *
-   * Target endpoint: /api/method/well_pro.well_pro_app.api.insert_record
    */
   async insertRecord(payload, isOfflineReplay = false) {
     if (!offlineQueueService.isOnline() && !isOfflineReplay) {
       const doctype = payload.doctype || (payload.records && payload.records[0]?.doctype) || 'Record';
-      const queued = offlineQueueService.enqueue('insert_record', payload, {
+      const queued = await offlineQueueService.enqueue('insert_record', payload, {
         doctype,
         title: `Offline ${doctype}`,
         preview: JSON.stringify(payload.record_data || payload.records || payload).slice(0, 100)
@@ -144,15 +211,22 @@ export const feedService = {
     }
 
     try {
-      const resData = await callFrappeMethod('insert_record', payload);
-      if (resData && (resData.success || resData.data)) {
-        return resData;
+      // 1. Try Frappe insert_record
+      try {
+        const resData = await callFrappeMethod('insert_record', payload);
+        if (resData && (resData.success || resData.data)) {
+          return resData;
+        }
+      } catch (frappeErr) {
+        // 2. Fallback to FastAPI /records/insert
+        const response = await fastApiClient.post('/records/insert', payload);
+        if (response.data) return response.data;
+        throw frappeErr;
       }
-      throw new Error(resData?.message || 'Failed to insert record');
     } catch (err) {
       if (!isOfflineReplay && (!navigator.onLine || err.message?.includes('Network Error'))) {
         const doctype = payload.doctype || 'Record';
-        offlineQueueService.enqueue('insert_record', payload, {
+        await offlineQueueService.enqueue('insert_record', payload, {
           doctype,
           title: `Offline ${doctype}`,
           preview: 'Record queued after network failure'
@@ -160,93 +234,148 @@ export const feedService = {
         return {
           success: true,
           _offline_pending: true,
-          message: 'Network issue detected. Saved to offline queue.'
+          message: 'Saved offline due to network issue. Will sync automatically.',
+          data: payload
         };
       }
-      throw new Error(extractFrappeError(err, 'Record creation failed'), { cause: err });
+      throw new Error(extractApiError(err, 'Failed to insert record'), { cause: err });
     }
   },
 
   /**
-   * Dedicated endpoint for conversational LLM / voice transcripts.
-   * Target endpoint: /api/method/well_pro.well_pro_app.api.store_ai_record
+   * Dedicated AI extracted records ingestion.
    */
-  async storeAiRecord(payload) {
+  async storeAiRecord(domainPayload, isOfflineReplay = false) {
+    if (!offlineQueueService.isOnline() && !isOfflineReplay) {
+      const queued = await offlineQueueService.enqueue('insert_record', domainPayload, {
+        doctype: 'AI Extracted Ingestion',
+        title: 'Offline AI Ingestion',
+        preview: Object.keys(domainPayload).join(', ')
+      });
+      return {
+        success: true,
+        _offline_pending: true,
+        message: 'Saved offline. AI records will sync when reconnected.',
+        queue_id: queued.id
+      };
+    }
+
     try {
-      const resData = await callFrappeMethod('store_ai_record', payload);
-      if (resData && (resData.success || resData.data)) {
-        return resData;
+      try {
+        const response = await fastApiClient.post('/records/store-ai', domainPayload);
+        return response.data;
+      } catch {
+        const resData = await callFrappeMethod('store_ai_record', domainPayload);
+        if (resData && (resData.success || resData.data)) return resData;
       }
-      throw new Error(resData?.message || 'Failed to store AI record');
     } catch (err) {
-      throw new Error(extractFrappeError(err, 'AI ingestion failed'), { cause: err });
+      throw new Error(extractApiError(err, 'Failed to store AI extracted record'), { cause: err });
     }
   },
 
   /**
-   * Safely updates an existing user document.
-   * Target endpoint: /api/method/well_pro.well_pro_app.api.update_record
+   * Updates an existing document fields.
    */
   async updateRecord(doctype, name, updateData, isOfflineReplay = false) {
+    if (!doctype || !name || !updateData) {
+      throw new Error('doctype, name, and updateData are required');
+    }
+
     if (!offlineQueueService.isOnline() && !isOfflineReplay) {
-      offlineQueueService.enqueue('update_record', { doctype, name, updateData }, {
-        doctype,
-        title: `Update ${doctype}`,
-        preview: `Queued update for record ${name}`
-      });
+      const queued = await offlineQueueService.enqueue(
+        'update_record',
+        { doctype, name, updateData },
+        {
+          doctype,
+          title: `Update ${doctype} (${name})`,
+          preview: JSON.stringify(updateData).slice(0, 80)
+        }
+      );
       return {
         success: true,
         _offline_pending: true,
-        message: 'Update queued for offline synchronization.'
+        message: 'Update queued offline. Will sync when reconnected.',
+        queue_id: queued.id
       };
     }
 
     try {
-      const resData = await callFrappeMethod('update_record', {
-        doctype,
-        name,
-        update_data: updateData
-      });
-
-      if (resData && (resData.success || resData.data)) {
+      try {
+        const resData = await callFrappeMethod('update_record', {
+          doctype,
+          name,
+          update_data: updateData
+        });
         return resData;
+      } catch {
+        const response = await fastApiClient.put('/records/update', {
+          doctype,
+          name,
+          update_data: updateData
+        });
+        return response.data;
       }
-      throw new Error(resData?.message || 'Failed to update record');
     } catch (err) {
-      throw new Error(extractFrappeError(err, 'Record update failed'), { cause: err });
+      if (!isOfflineReplay && (!navigator.onLine || err.message?.includes('Network Error'))) {
+        await offlineQueueService.enqueue('update_record', { doctype, name, updateData }, {
+          doctype,
+          title: `Update ${doctype}`,
+          preview: 'Update queued after network failure'
+        });
+        return { success: true, _offline_pending: true, message: 'Update saved locally.' };
+      }
+      throw new Error(extractApiError(err, `Failed to update ${doctype}`), { cause: err });
     }
   },
 
   /**
-   * Safely purges a record and updates daily scores.
-   * Target endpoint: /api/method/well_pro.well_pro_app.api.delete_record
+   * Permanently deletes a single document record.
    */
   async deleteRecord(doctype, name, isOfflineReplay = false) {
+    if (!doctype || !name) {
+      throw new Error('doctype and name are required');
+    }
+
     if (!offlineQueueService.isOnline() && !isOfflineReplay) {
-      offlineQueueService.enqueue('delete_record', { doctype, name }, {
-        doctype,
-        title: `Delete ${doctype}`,
-        preview: `Queued deletion for record ${name}`
-      });
+      const queued = await offlineQueueService.enqueue(
+        'delete_record',
+        { doctype, name },
+        {
+          doctype,
+          title: `Delete ${doctype}`,
+          preview: `Eviction of ${name}`
+        }
+      );
       return {
         success: true,
         _offline_pending: true,
-        message: 'Deletion queued for offline synchronization.'
+        message: 'Deletion queued offline. Will sync when reconnected.',
+        queue_id: queued.id
       };
     }
 
     try {
-      const resData = await callFrappeMethod('delete_record', {
-        doctype,
-        name
-      });
-
-      if (resData && (resData.success || resData.data)) {
+      try {
+        const resData = await callFrappeMethod('delete_record', { doctype, name });
         return resData;
+      } catch {
+        const response = await fastApiClient.delete('/records/delete', {
+          params: { doctype, name }
+        });
+        return response.data;
       }
-      throw new Error(resData?.message || 'Failed to delete record');
     } catch (err) {
-      throw new Error(extractFrappeError(err, 'Record deletion failed'), { cause: err });
+      if (!isOfflineReplay && (!navigator.onLine || err.message?.includes('Network Error'))) {
+        await offlineQueueService.enqueue('delete_record', { doctype, name }, {
+          doctype,
+          title: `Delete ${doctype}`,
+          preview: `Eviction of ${name}`
+        });
+        return { success: true, _offline_pending: true, message: 'Deletion queued locally.' };
+      }
+      throw new Error(extractApiError(err, `Failed to delete ${doctype}`), { cause: err });
     }
   }
 };
+
+export default feedService;

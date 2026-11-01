@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { aiService } from '../services/aiService';
+import { LiveCameraCapture } from '../components/LiveCameraCapture';
 import {
   Sparkles,
   Send,
@@ -10,6 +11,7 @@ import {
   Mic,
   MicOff,
   Image as ImageIcon,
+  Camera,
   FileText,
   UploadCloud,
   Trash2,
@@ -39,6 +41,27 @@ const QUICK_PROMPTS = [
   }
 ];
 
+function getOptimalAudioConfig() {
+  if (typeof MediaRecorder === 'undefined') {
+    return { mimeType: '', ext: 'webm' };
+  }
+
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+
+  if (isIOS) {
+    if (MediaRecorder.isTypeSupported('audio/mp4')) return { mimeType: 'audio/mp4', ext: 'mp4' };
+    if (MediaRecorder.isTypeSupported('audio/aac')) return { mimeType: 'audio/aac', ext: 'm4a' };
+    return { mimeType: '', ext: 'mp4' };
+  }
+
+  if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) return { mimeType: 'audio/webm;codecs=opus', ext: 'webm' };
+  if (MediaRecorder.isTypeSupported('audio/webm')) return { mimeType: 'audio/webm', ext: 'webm' };
+  if (MediaRecorder.isTypeSupported('audio/mp4')) return { mimeType: 'audio/mp4', ext: 'mp4' };
+
+  return { mimeType: '', ext: 'webm' };
+}
+
 export function AICapturePage({ onRecordCreated }) {
   // Modes: 'text' | 'voice' | 'image'
   const [activeTab, setActiveTab] = useState('text');
@@ -56,11 +79,14 @@ export function AICapturePage({ onRecordCreated }) {
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
   const audioInputRef = useRef(null);
+  const audioExtRef = useRef('webm');
 
   // Image / Document Mode State
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [isLiveCameraOpen, setIsLiveCameraOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   // Common Submission State
   const [loading, setLoading] = useState(false);
@@ -89,15 +115,36 @@ export function AICapturePage({ onRecordCreated }) {
     setAudioFile(null);
     audioChunksRef.current = [];
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : 'audio/mp4';
+    const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function';
 
-      const recorder = new MediaRecorder(stream, { mimeType });
+    if (!hasMediaDevices) {
+      if (audioInputRef.current) {
+        audioInputRef.current.click();
+        return;
+      }
+      setError('Live microphone requires HTTPS or localhost in modern browsers. Please use the Upload Audio File option below.');
+      return;
+    }
+
+    try {
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+
+      const { mimeType, ext } = getOptimalAudioConfig();
+      audioExtRef.current = ext;
+
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
@@ -107,10 +154,10 @@ export function AICapturePage({ onRecordCreated }) {
       };
 
       recorder.onstop = () => {
-        const finalBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const actualType = recorder.mimeType || mimeType || (ext === 'mp4' ? 'audio/mp4' : 'audio/webm');
+        const finalBlob = new Blob(audioChunksRef.current, { type: actualType });
         setAudioBlob(finalBlob);
         setAudioUrl(URL.createObjectURL(finalBlob));
-        // Stop audio tracks so the mic is released
         stream.getTracks().forEach((track) => track.stop());
       };
 
@@ -121,7 +168,11 @@ export function AICapturePage({ onRecordCreated }) {
         setRecordingSeconds((prev) => prev + 1);
       }, 1000);
     } catch (err) {
-      setError('Microphone access denied or unsupported: ' + err.message);
+      if (audioInputRef.current) {
+        audioInputRef.current.click();
+        return;
+      }
+      setError('Microphone access denied or unavailable: ' + err.message);
     }
   };
 
@@ -175,6 +226,7 @@ export function AICapturePage({ onRecordCreated }) {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   // Submission Processors
@@ -209,7 +261,8 @@ export function AICapturePage({ onRecordCreated }) {
     setResult(null);
 
     try {
-      const filename = audioFile ? audioFile.name : 'voice_recording.webm';
+      const ext = audioExtRef.current || 'webm';
+      const filename = audioFile ? audioFile.name : `voice_recording_${Date.now()}.${ext}`;
       const res = await aiService.processAudio(payload, filename);
       setResult(res);
       setProcessedType('voice');
@@ -513,6 +566,18 @@ export function AICapturePage({ onRecordCreated }) {
             <span className="font-mono text-[10px] text-[#8a99ad]">OPENROUTER VISION & GEMINI OCR</span>
           </div>
 
+          {/* Native Camera input */}
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileSelect}
+            className="hidden"
+            id="camera-upload-input"
+          />
+
+          {/* File/Gallery input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -522,22 +587,63 @@ export function AICapturePage({ onRecordCreated }) {
             id="file-upload-input"
           />
 
+          {/* Live Camera Viewfinder Modal for Desktop */}
+          <LiveCameraCapture
+            isOpen={isLiveCameraOpen}
+            onClose={() => setIsLiveCameraOpen(false)}
+            onCapture={(file) => {
+              setSelectedFile(file);
+              setPreviewUrl(URL.createObjectURL(file));
+            }}
+          />
+
           {!selectedFile ? (
-            <label
-              htmlFor="file-upload-input"
-              className="border-2 border-dashed border-[#2a3644] hover:border-[#f43f5e] rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-[#1a232e]/50 hover:bg-[#1a232e] group"
-            >
-              <div className="p-4 rounded-2xl bg-[#121820] group-hover:bg-[#f43f5e]/10 text-[#8a99ad] group-hover:text-[#f43f5e] transition-colors mb-3">
-                <UploadCloud className="w-8 h-8" />
-              </div>
-              <h3 className="font-bold text-white text-base">Select Receipt, Medical Report, or Gym Photo</h3>
-              <p className="text-xs text-[#8a99ad] mt-1 max-w-sm">
-                Supports PNG, JPG, WEBP, or PDF documents. The Vision AI will extract dates, amounts, exercises, and health metrics.
-              </p>
-              <span className="mt-4 font-mono text-xs text-[#06b6d4] px-3 py-1.5 rounded-lg bg-[#121820] border border-[#2a3644]">
-                BROWSE FILES
-              </span>
-            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Choice 1: Camera */}
+              <label
+                htmlFor="camera-upload-input"
+                onClick={(e) => {
+                  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
+                  if (isDesktop) {
+                    e.preventDefault();
+                    setIsLiveCameraOpen(true);
+                  }
+                }}
+                className="border-2 border-dashed border-[#2a3644] hover:border-[#f43f5e] rounded-2xl p-6 flex flex-col items-center justify-between text-center cursor-pointer transition-all bg-[#1a232e]/50 hover:bg-[#1a232e] group"
+              >
+                <div className="p-3.5 rounded-2xl bg-[#121820] group-hover:bg-[#f43f5e]/15 text-[#f43f5e] transition-colors mb-2 shadow-lg shadow-rose-500/10">
+                  <Camera className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Open Camera</h3>
+                  <p className="text-xs text-[#8a99ad] mt-1 max-w-xs leading-relaxed">
+                    Directly snap a photo of your receipt, food plate, gym session, or medical report.
+                  </p>
+                </div>
+                <span className="mt-4 font-mono text-[11px] font-bold text-white px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#f43f5e] to-[#a855f7] shadow-md group-hover:opacity-95 transition-all">
+                  LAUNCH CAMERA
+                </span>
+              </label>
+
+              {/* Choice 2: Gallery / Files */}
+              <label
+                htmlFor="file-upload-input"
+                className="border-2 border-dashed border-[#2a3644] hover:border-[#06b6d4] rounded-2xl p-6 flex flex-col items-center justify-between text-center cursor-pointer transition-all bg-[#1a232e]/50 hover:bg-[#1a232e] group"
+              >
+                <div className="p-3.5 rounded-2xl bg-[#121820] group-hover:bg-[#06b6d4]/15 text-[#06b6d4] transition-colors mb-2 shadow-lg shadow-cyan-500/10">
+                  <UploadCloud className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Select Image / Document</h3>
+                  <p className="text-xs text-[#8a99ad] mt-1 max-w-xs leading-relaxed">
+                    Upload an existing PNG, JPG, or PDF document from your photos or file manager.
+                  </p>
+                </div>
+                <span className="mt-4 font-mono text-[11px] font-bold text-[#06b6d4] px-3.5 py-1.5 rounded-xl bg-[#121820] border border-[#2a3644] group-hover:border-[#06b6d4] transition-all">
+                  BROWSE FILES
+                </span>
+              </label>
+            </div>
           ) : (
             <div className="bg-[#1a232e] border border-[#2a3644] rounded-2xl p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-[#2a3644] pb-3">
@@ -607,29 +713,38 @@ export function AICapturePage({ onRecordCreated }) {
 
       {/* Multimodal Results Output Card */}
       {result && (() => {
+        const isOffline = result._offline_pending === true || result.status === 'queued';
         const hasRecords = Array.isArray(result.extracted_records) && result.extracted_records.length > 0;
-        const hasDetails = result.is_relevant !== false && hasRecords;
+        const hasDetails = isOffline || (result.is_relevant !== false && hasRecords);
 
         return (
           <div className={`bg-[#121820] border rounded-2xl p-5 shadow-2xl space-y-4 animate-in fade-in ${
-            hasDetails ? 'border-emerald-500/40' : 'border-amber-500/40'
+            isOffline ? 'border-[#06b6d4]/50' : hasDetails ? 'border-emerald-500/40' : 'border-amber-500/40'
           }`}>
             {/* Header Status */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#2a3644] pb-3">
               <div className="flex items-center gap-2.5">
-                {hasDetails ? (
+                {isOffline ? (
+                  <CheckCircle2 className="w-5 h-5 text-[#06b6d4] shrink-0" />
+                ) : hasDetails ? (
                   <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                 ) : (
                   <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
                 )}
                 <div>
                   <h3 className="font-bold text-white text-sm">
-                    {hasDetails
+                    {isOffline
+                      ? `${processedType === 'voice' ? 'Voice' : processedType === 'image' ? 'Image' : 'Text'} Saved Offline!`
+                      : hasDetails
                       ? `${processedType === 'voice' ? 'Voice' : processedType === 'image' ? 'Image' : 'Text'} Details Successfully Added`
                       : `${processedType === 'voice' ? 'Voice has no details' : processedType === 'image' ? 'Image has no details' : 'Text has no details'}`}
                   </h3>
-                  <span className={`font-mono text-[10px] ${hasDetails ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {hasDetails
+                  <span className={`font-mono text-[10px] ${
+                    isOffline ? 'text-[#06b6d4]' : hasDetails ? 'text-emerald-400' : 'text-amber-400'
+                  }`}>
+                    {isOffline
+                      ? 'SAVED LOCALLY IN INDEXEDDB • QUEUED FOR AUTO-SYNC'
+                      : hasDetails
                       ? `INSERTED ${result.extracted_records?.length || 1} RECORD(S) TO FRAPPE`
                       : 'NO RELEVANT WELLBEING DATA IDENTIFIED'}
                   </span>
@@ -637,15 +752,25 @@ export function AICapturePage({ onRecordCreated }) {
               </div>
 
               <span className={`self-start sm:self-auto font-mono text-[10px] px-2.5 py-1 rounded-full border ${
-                hasDetails
+                isOffline
+                  ? 'bg-cyan-500/10 border-cyan-500/30 text-[#06b6d4]'
+                  : hasDetails
                   ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                   : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
               }`}>
-                {hasDetails ? 'DETAILS EXTRACTED' : 'NO DETAILS FOUND'}
+                {isOffline ? 'QUEUED OFFLINE' : hasDetails ? 'PROCESSED' : 'REJECTED / UNRELATED'}
               </span>
             </div>
 
-          {/* Reason Explanation */}
+            {/* Offline Explanation */}
+            {isOffline && (
+              <div className="bg-[#1a232e] p-3 rounded-xl border border-[#06b6d4]/40 font-mono text-xs text-[#06b6d4] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#06b6d4] shrink-0" />
+                <span>{result.message || 'Saved offline in IndexedDB. Will automatically process when connection returns.'}</span>
+              </div>
+            )}
+
+            {/* Reason Explanation */}
           {result.reason && (
             <div className="bg-[#1a232e] p-3 rounded-xl border border-[#2a3644] font-mono text-xs">
               <span className="text-[10px] text-[#8a99ad] block mb-1">AI CLASSIFICATION REASON:</span>

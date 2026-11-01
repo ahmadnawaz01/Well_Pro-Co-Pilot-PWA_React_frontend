@@ -47,13 +47,13 @@ export function OfflineQueueModal({ isOpen, onClose }) {
     setSyncing(false);
   };
 
-  const handleClearCompleted = () => {
-    offlineQueueService.clearFulfilled();
+  const handleClearCompleted = async () => {
+    await offlineQueueService.clearFulfilled();
     setQueue(offlineQueueService.getQueue());
   };
 
-  const handleDeleteItem = (id) => {
-    offlineQueueService.deleteItem(id);
+  const handleDeleteItem = async (id) => {
+    await offlineQueueService.deleteItem(id);
     setQueue(offlineQueueService.getQueue());
   };
 

@@ -8,7 +8,7 @@ import { ManualRecordModal } from '../components/ManualRecordModal';
 import { EditRecordModal } from '../components/EditRecordModal';
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal';
 import { OfflineQueueModal } from '../components/OfflineQueueModal';
-import { RefreshCw, Layers, Calendar, X, PlusCircle, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, Layers, Calendar, X, PlusCircle, WifiOff } from 'lucide-react';
 
 const FILTERS = [
   { id: 'ALL', label: 'All Life' },

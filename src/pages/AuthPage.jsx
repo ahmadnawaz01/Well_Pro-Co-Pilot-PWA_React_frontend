@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { validateAuthForm, getReadableAuthError } from '../utils/authValidation';
-import { Cpu, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Cpu, ShieldCheck, AlertCircle, Download } from 'lucide-react';
 
 export function AuthPage({ onAuthSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -58,14 +58,25 @@ export function AuthPage({ onAuthSuccess }) {
     <div className="min-h-screen bg-[#090d12] text-[#f0f4f8] flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-[#121820]/80 backdrop-blur-xl border border-[#2a3644] rounded-2xl p-6 shadow-2xl space-y-6">
         {/* Header Branding */}
-        <div className="flex items-center gap-3 border-b border-[#2a3644] pb-4">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] flex items-center justify-center shadow-lg shadow-rose-500/20">
-            <Cpu className="w-5 h-5 text-white" />
+        <div className="flex items-center justify-between border-b border-[#2a3644] pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#f43f5e] to-[#a855f7] flex items-center justify-center shadow-lg shadow-rose-500/20">
+              <Cpu className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">WELLPRO CO-PILOT</h1>
+              <span className="font-mono text-[10px] text-[#06b6d4] tracking-widest block">SECURE SYSTEM AUTHENTICATION</span>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">WELLPRO CO-PILOT</h1>
-            <span className="font-mono text-[10px] text-[#06b6d4] tracking-widest block">SECURE SYSTEM AUTHENTICATION</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('wellpro:trigger_install'))}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1a232e] hover:bg-[#2a3644] border border-[#2a3644] hover:border-[#f43f5e]/50 text-[#06b6d4] hover:text-white font-mono text-[11px] rounded-xl transition-all cursor-pointer"
+            title="Install App"
+          >
+            <Download className="w-3.5 h-3.5 text-[#f43f5e]" />
+            <span className="hidden sm:inline">INSTALL</span>
+          </button>
         </div>
 
         {/* Mode Switcher Tabs */}

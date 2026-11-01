@@ -6,6 +6,8 @@ import { LifeFeedPage } from './pages/LifeFeedPage';
 import { AICapturePage } from './pages/AICapturePage';
 import { MyLifePage } from './pages/MyLifePage';
 import { CoPilotPage } from './pages/CoPilotPage';
+import { InstallPWAPrompt } from './components/InstallPWAPrompt';
+import { ToastNotification } from './components/ToastNotification';
 
 export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -48,39 +50,49 @@ export function App() {
   }
 
   if (!isAuthenticated) {
-    return <AuthPage onAuthSuccess={checkSession} />;
+    return (
+      <>
+        <InstallPWAPrompt />
+        <ToastNotification />
+        <AuthPage onAuthSuccess={checkSession} />
+      </>
+    );
   }
 
   return (
-    <AppLayout
-      userEmail={userData?.user}
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
-      onLogout={() => authService.logout()}
-    >
-      {activeTab === 'feed' && (
-        <LifeFeedPage userProfile={userData?.profile} />
-      )}
+    <>
+      <InstallPWAPrompt />
+      <ToastNotification />
+      <AppLayout
+        userEmail={userData?.user}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onLogout={() => authService.logout()}
+      >
+        {activeTab === 'feed' && (
+          <LifeFeedPage userProfile={userData?.profile} />
+        )}
 
-      {activeTab === 'capture' && (
-        <AICapturePage onRecordCreated={() => {}} />
-      )}
+        {activeTab === 'capture' && (
+          <AICapturePage onRecordCreated={() => { }} />
+        )}
 
-      {activeTab === 'life' && (
-        <MyLifePage
-          userEmail={userData?.user}
-          userProfile={userData?.profile}
-          userConsent={userData?.consent}
-          onProfileUpdated={(updatedProfile) => {
-            setUserData(prev => ({ ...prev, profile: updatedProfile }));
-          }}
-        />
-      )}
+        {activeTab === 'life' && (
+          <MyLifePage
+            userEmail={userData?.user}
+            userProfile={userData?.profile}
+            userConsent={userData?.consent}
+            onProfileUpdated={(updatedProfile) => {
+              setUserData(prev => ({ ...prev, profile: updatedProfile }));
+            }}
+          />
+        )}
 
-      {activeTab === 'copilot' && (
-        <CoPilotPage />
-      )}
-    </AppLayout>
+        {activeTab === 'copilot' && (
+          <CoPilotPage />
+        )}
+      </AppLayout>
+    </>
   );
 }
 
